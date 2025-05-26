@@ -1,0 +1,19 @@
+{
+  "git.enabled": true,
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.git": true,
+    "**/backup": true,
+    "**/.eslintrc.cjs": true,
+    "**/vite.config.ts": true,
+    "**/tsconfig.*": true,
+    "**/eslint.config.js": true,
+    "**/public": true,
+    "**/index.html": true,
+    "**/package.json": true,
+    "**/package-lock.json": true,
+    "**/.gitignore": true,
+    "**/src/vite-env.d.ts": true
+  },
+  "editor.fontSize": 18
+}
