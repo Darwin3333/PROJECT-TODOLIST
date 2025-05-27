@@ -41,6 +41,7 @@ function App() {
       <h1>Minha Lista de Tarefas</h1>
 
       <TaskForm onTaskAdded={handleTaskAdded} />
+
       <hr className="divider" />
 
       <h3>Tarefas Cadastradas</h3>
@@ -61,10 +62,12 @@ function App() {
               className="task-item"
             >
               <h4>
-                {task.titulo} (<span className={`status-${task.status}`}>{task.status}</span>)
+                {task.titulo}<span className={`status-${task.status.replace(/\s+/g, '-')}`}>{task.status}</span>
               </h4>
-              <p>Descrição: {task.descricao}</p>
-              <p>Criado em: {new Date(task.data_criacao).toLocaleDateString()} às {new Date(task.data_criacao).toLocaleTimeString()}</p>
+              <hr/>
+              <p><strong>Descrição: </strong>{task.descricao}</p>
+              <p>Criado em:
+              {new Date(task.data_criacao).toLocaleDateString()} às {new Date(task.data_criacao).toLocaleTimeString()}</p>
               {task.tags && task.tags.length > 0 && (
                 <p>Tags: <span className="task-tags">{task.tags.join(', ')}</span></p>
               )}
