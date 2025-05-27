@@ -11,12 +11,14 @@ export interface TaskPayload {
   tags: string[];
   comentarios: CommentPayload[];
   user_id?: string
+  
 }
 
 export interface Task extends TaskPayload {
     id: string;
     data_criacao: string;
     data_atualizacao?: string;
+
 }
 
 

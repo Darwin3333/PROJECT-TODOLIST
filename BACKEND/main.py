@@ -61,7 +61,7 @@ class TarefaUpdate(BaseModel):
 class TarefaInDB(TarefaBase):
     # Definimos 'id' como string, e usamos 'alias="_id"' para o Pydantic entender
     # que o campo '_id' do MongoDB deve ser mapeado para 'id' no Python.
-    id: str = Field(alias="_id") 
+    id: str  
     data_criacao: str
     comentarios: List[Comentario] = []
 
@@ -176,11 +176,13 @@ async def deletar_tarefa_rota(tarefa_id: str):
     """
     Deleta uma tarefa.
     """
+    print(f"DEBUG: DELETE - Requisição recebida para tarefa_id: {tarefa_id}")
     try:
         resultado = deletar_tarefa(tarefa_id)
         if resultado and resultado.deleted_count == 1:
             return {"message": "Tarefa deletada com sucesso."}
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erro ao deletar tarefa: {str(e)}")

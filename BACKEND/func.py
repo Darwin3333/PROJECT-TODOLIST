@@ -1,7 +1,7 @@
 from pymongo import MongoClient
 from conexao import colecao_tarefas # Certifique-se que 'conexao.py' está correto
 from datetime import datetime
-from bson import ObjectId # Importar ObjectId para trabalhar com _id do MongoDB
+from bson import ObjectId, errors # Importar ObjectId para trabalhar com _id do MongoDB
 
 # NOTA: As funções agora recebem argumentos e retornam dados, não mais usam input()/print() diretamente.
 
@@ -24,40 +24,94 @@ def criar_tarefa(tarefa_data: dict):
 
 def listar_tarefas():
     """
-    Lista todas as tarefas no banco de dados.
-    Retorna uma lista de dicionários de tarefas, convertendo ObjectId para string
-    e garantindo que data_criacao seja string.
+    Lista todas as tarefas no banco de dados, transformando _id para id e formatando datas.
     """
-    tarefas = []
-    for tarefa in colecao_tarefas.find():
-        # REVERTA ESTA LINHA PARA APENAS str(tarefa['_id'])
-        # E NÃO RENOMEIE PARA 'id' AQUI TAMBÉM
-        tarefa['_id'] = str(tarefa['_id']) # Mantenha esta linha para converter para string
+    tarefas_formatadas = []
+    for tarefa_db in colecao_tarefas.find():
+        # <--- SUBSTITUA TODO O CONTEÚDO DO SEU LOOP for tarefa in colecao_tarefas.find(): POR ISSO:
+        tarefa_formatada = {
+            "id": str(tarefa_db["_id"]),  # Transforma _id para id e string
+            "titulo": tarefa_db.get("titulo"),
+            "descricao": tarefa_db.get("descricao"),
+            "status": tarefa_db.get("status"),
+            "user_id": tarefa_db.get("user_id"), # Incluir user_id ao listar
+            "tags": tarefa_db.get("tags", []),
+            "comentarios": [] # Inicializa, vamos preencher e formatar os comentários
+        }
 
-        # Garante que data_criacao é string (mantenha isso)
-        if isinstance(tarefa.get('data_criacao'), datetime):
-            tarefa['data_criacao'] = tarefa['data_criacao'].isoformat()
+        # Formatação de data_criacao (sempre para ISO format para consistência com o frontend)
+        if isinstance(tarefa_db.get("data_criacao"), datetime):
+            tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
+        else:
+            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", "")) # Garante que é string
 
-        tarefas.append(tarefa)
-    return tarefas
+        # Formatação de comentários
+        comentarios_db = tarefa_db.get("comentarios", [])
+        for comentario_original in comentarios_db:
+            comentario_formatado = {
+                "autor": comentario_original.get("autor"),
+                "comentario": comentario_original.get("comentario"),
+                "data": "" # Inicializa
+            }
+            if isinstance(comentario_original.get("data"), datetime):
+                comentario_formatado["data"] = comentario_original.get("data").isoformat()
+            else:
+                comentario_formatado["data"] = str(comentario_original.get("data", ""))
+            tarefa_formatada["comentarios"].append(comentario_formatado)
+
+        tarefas_formatadas.append(tarefa_formatada)
+    return tarefas_formatadas
 
 def buscar_tarefa_por_id(tarefa_id: str):
     """
-    Busca uma tarefa específica pelo seu ID.
+    Busca uma tarefa específica pelo seu ID, transformando _id para id e formatando datas.
     Retorna a tarefa encontrada ou None se não existir.
     """
     try:
-        tarefa = colecao_tarefas.find_one({"_id": ObjectId(tarefa_id)})
-        if tarefa:
-            # Garante que data_criacao é string (mantenha isso)
-            if isinstance(tarefa.get('data_criacao'), datetime):
-                tarefa['data_criacao'] = tarefa['data_criacao'].isoformat()
+        obj_id = ObjectId(tarefa_id)
+        tarefa_db = colecao_tarefas.find_one({"_id": obj_id})
+        if tarefa_db:
+            # <--- SUBSTITUA TODO O CONTEÚDO DO IF tarefa_db: POR ISSO:
+            tarefa_formatada = {
+                "id": str(tarefa_db["_id"]), # Transforma _id para id e string
+                "titulo": tarefa_db.get("titulo"),
+                "descricao": tarefa_db.get("descricao"),
+                "status": tarefa_db.get("status"),
+                "user_id": tarefa_db.get("user_id"), # Incluir user_id ao buscar por ID
+                "tags": tarefa_db.get("tags", []),
+                "comentarios": [] # Inicializa
+            }
 
-          
+            # Formatação de data_criacao
+            if isinstance(tarefa_db.get("data_criacao"), datetime):
+                tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
+            else:
+                tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
 
-        return tarefa # Retorne o dicionário com '_id'
-    except Exception:
+            # Formatação de comentários
+            comentarios_db = tarefa_db.get("comentarios", [])
+            for comentario_original in comentarios_db:
+                comentario_formatado = {
+                    "autor": comentario_original.get("autor"),
+                    "comentario": comentario_original.get("comentario"),
+                    "data": ""
+                }
+                if isinstance(comentario_original.get("data"), datetime):
+                    comentario_formatado["data"] = comentario_original.get("data").isoformat()
+                else:
+                    comentario_formatado["data"] = str(comentario_original.get("data", ""))
+                tarefa_formatada["comentarios"].append(comentario_formatado)
+
+            return tarefa_formatada
         return None
+    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO except
+        print(f"Erro: ID inválido '{tarefa_id}'")
+        return None
+    except Exception as e:
+        print(f"Erro ao buscar tarefa por ID no func.py: {e}")
+        raise # Re-lança a exceção para ser tratada pela rota
+
+
 def atualizar_tarefa(tarefa_id: str, dados_atualizacao: dict):
     """
     Atualiza uma tarefa existente no banco de dados.
@@ -75,6 +129,9 @@ def atualizar_tarefa(tarefa_id: str, dados_atualizacao: dict):
             {"$set": dados_atualizacao}
         )
         return result
+    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
+        print(f"Erro: ID inválido para adicionar tag '{tarefa_id}'")
+        return None
     except Exception:
         return None # Ou levantar uma exceção mais específica
 
@@ -89,6 +146,9 @@ def adicionar_tag_a_tarefa(tarefa_id: str, tag_nova: str):
             {"$addToSet": {"tags": tag_nova}} # $addToSet garante que a tag é única
         )
         return result
+    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
+        print(f"Erro: ID inválido para adicionar tag '{tarefa_id}'")
+        return None
     except Exception:
         return None
 
@@ -104,6 +164,9 @@ def atualizar_tag_tarefa(tarefa_id: str, tag_antiga: str, tag_nova: str):
             {"$pull": {"tags": tag_antiga}, "$addToSet": {"tags": tag_nova}}
         )
         return result
+    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
+        print(f"ERRO: FUNC - ID inválido para deletar: '{tarefa_id}'")
+        return None
     except Exception:
         return None
 
@@ -114,22 +177,55 @@ def deletar_tarefa(tarefa_id: str):
     Recebe o ID da tarefa.
     Retorna o resultado da operação de deleção do MongoDB.
     """
+    print(f"DEBUG: FUNC - deletar_tarefa chamada com ID: {tarefa_id}")
     try:
-        result = colecao_tarefas.delete_one({"_id": ObjectId(tarefa_id)})
+        object_id = ObjectId(tarefa_id)
+        print(f"DEBUG: FUNC - Converteu para ObjectId: {object_id}")
+        result = colecao_tarefas.delete_one({"_id": object_id})
         return result
+    except errors.InvalidId as e_invalid_id: # <--- MUDANÇA AQUI: Capture a exceção com um nome diferente
+        print(f"ERRO: FUNC - ID inválido para deletar: '{tarefa_id}' - Detalhes: {e_invalid_id}")
+        return None
     except Exception:
+        print(f"DEBUG: FUNC - ERRO ao converter ObjectId ou deletar: {e}")
         return None # Ou levantar uma exceção mais específica
 
 def buscar_tarefas_por_criterio(criterio: dict):
     """
-    Busca tarefas com base em um critério.
-    Recebe um dicionário com o filtro (ex: {"status": "pendente"}).
-    Retorna uma lista de tarefas encontradas.
+    Busca tarefas com base em um critério, formatando os resultados.
     """
     tarefas_encontradas = []
-    for tarefa in colecao_tarefas.find(criterio):
-        tarefa['_id'] = str(tarefa['_id']) # Converte ObjectId para string para JSON
-        tarefas_encontradas.append(tarefa)
+    for tarefa_db in colecao_tarefas.find(criterio):
+        # <--- SUBSTITUA TODO O CONTEÚDO DO SEU LOOP for tarefa in colecao_tarefas.find(criterio): POR ISSO:
+        tarefa_formatada = {
+            "id": str(tarefa_db["_id"]), # Garante 'id' e string
+            "titulo": tarefa_db.get("titulo"),
+            "descricao": tarefa_db.get("descricao"),
+            "status": tarefa_db.get("status"),
+            "user_id": tarefa_db.get("user_id"), # Incluir user_id ao buscar por critério
+            "tags": tarefa_db.get("tags", []),
+            "comentarios": []
+        }
+
+        if isinstance(tarefa_db.get("data_criacao"), datetime):
+            tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
+        else:
+            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
+
+        comentarios_db = tarefa_db.get("comentarios", [])
+        for comentario_original in comentarios_db:
+            comentario_formatado = {
+                "autor": comentario_original.get("autor"),
+                "comentario": comentario_original.get("comentario"),
+                "data": ""
+            }
+            if isinstance(comentario_original.get("data"), datetime):
+                comentario_formatado["data"] = comentario_original.get("data").isoformat()
+            else:
+                comentario_formatado["data"] = str(comentario_original.get("data", ""))
+            tarefa_formatada["comentarios"].append(comentario_formatado)
+
+        tarefas_encontradas.append(tarefa_formatada)
     return tarefas_encontradas
 
 def adicionar_comentario(tarefa_id: str, autor: str, comentario_texto: str):

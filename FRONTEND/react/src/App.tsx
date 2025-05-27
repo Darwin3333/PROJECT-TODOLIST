@@ -198,7 +198,7 @@ function App() {
                   <hr className="my-4" />
                 </>
               } />
-            {/* NOVO: Rota para o Dashboard */}
+
             </Routes>
 
             {/* Modal de Visualização de Tarefa (mantém fora das rotas para ser global) */}
