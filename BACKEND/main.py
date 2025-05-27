@@ -47,9 +47,11 @@ class TarefaBase(BaseModel):
     descricao: str # Mantém como obrigatória
     status: str = Field("pendente", pattern="^(pendente|em andamento|concluída)$") # Validação de status
     tags: List[str] = []
+    user_id: Optional[str] = None
 
 class TarefaCreate(TarefaBase):
     pass # Herda de TarefaBase para criação
+    user_id: str # Agora é obrigatório ao criar, vindo do frontend
 
 class TarefaUpdate(BaseModel):
     titulo: Optional[str] = None

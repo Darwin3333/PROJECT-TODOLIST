@@ -13,7 +13,7 @@ def criar_tarefa(tarefa_data: dict):
     """
     # Adiciona data de criação e inicializa tags/comentários se não existirem
     if "data_criacao" not in tarefa_data:
-        tarefa_data["data_criacao"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        tarefa_data["data_criacao"] = datetime.now().isoformat()
     if "tags" not in tarefa_data or not isinstance(tarefa_data["tags"], list):
         tarefa_data["tags"] = []
     if "comentarios" not in tarefa_data or not isinstance(tarefa_data["comentarios"], list):
@@ -36,7 +36,7 @@ def listar_tarefas():
 
         # Garante que data_criacao é string (mantenha isso)
         if isinstance(tarefa.get('data_criacao'), datetime):
-            tarefa['data_criacao'] = tarefa['data_criacao'].strftime("%Y-%m-%d %H:%M")
+            tarefa['data_criacao'] = tarefa['data_criacao'].isoformat()
 
         tarefas.append(tarefa)
     return tarefas
@@ -51,7 +51,7 @@ def buscar_tarefa_por_id(tarefa_id: str):
         if tarefa:
             # Garante que data_criacao é string (mantenha isso)
             if isinstance(tarefa.get('data_criacao'), datetime):
-                tarefa['data_criacao'] = tarefa['data_criacao'].strftime("%Y-%m-%d %H:%M")
+                tarefa['data_criacao'] = tarefa['data_criacao'].isoformat()
 
           
 
