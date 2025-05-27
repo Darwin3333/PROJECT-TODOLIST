@@ -1,17 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import TaskForm from './component/TaskForm'; // Importe o novo componente
-
-// Interface para a tarefa que vem do backend (deve corresponder a TarefaInDB)
-interface Task {
-  id: string; // O _id do MongoDB vem como string 'id'
-  titulo: string;
-  descricao: string;
-  status: 'pendente' | 'em andamento' | 'concluída';
-  data_criacao: string;
-  tags: string[];
-  comentarios: { autor: string; comentario: string; data: string }[];
-}
+import type{ Task } from './types/interfaces';
+import './App.css'
 
 function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -46,62 +37,44 @@ function App() {
   };
 
   return (
-    <div
-      style={{
-        fontFamily: 'Arial, sans-serif',
-        maxWidth: '800px',
-        margin: '20px auto',
-        padding: '20px',
-        border: '1px solid #eee',
-        borderRadius: '8px',
-        boxShadow: '2px 2px 10px rgba(0,0,0,0.1)',
-      }}
-    >
+    <div className="app-container">
       <h1>Minha Lista de Tarefas</h1>
 
-      {/* Renderiza o formulário de adição de tarefas */}
       <TaskForm onTaskAdded={handleTaskAdded} />
-
-      <hr style={{ margin: '30px 0' }} />
+      <hr className="divider" />
 
       <h3>Tarefas Cadastradas</h3>
       {loadingTasks ? (
         <p>Carregando tarefas...</p>
       ) : errorTasks ? (
-        <p style={{ color: 'red' }}>{errorTasks}</p>
+        <p className="error-message">{errorTasks}</p>
       ) : tasks.length === 0 ? (
         <p>
           Nenhuma tarefa cadastrada ainda. Adicione uma usando o formulário
           acima!
         </p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0 }}>
+        <ul className="tasks-list">
           {tasks.map((task) => (
             <li
               key={task.id}
-              style={{
-                border: '1px solid #ddd',
-                padding: '15px',
-                marginBottom: '10px',
-                borderRadius: '5px',
-                backgroundColor: '#f9f9f9',
-              }}
+              className="task-item"
             >
               <h4>
-                {task.titulo} ({task.status})
+                {task.titulo} (<span className={`status-${task.status}`}>{task.status}</span>)
               </h4>
               <p>Descrição: {task.descricao}</p>
-              <p>Criado em: {task.data_criacao}</p>
+              <p>Criado em: {new Date(task.data_criacao).toLocaleDateString()} às {new Date(task.data_criacao).toLocaleTimeString()}</p>
               {task.tags && task.tags.length > 0 && (
-                <p>Tags: {task.tags.join(', ')}</p>
+                <p>Tags: <span className="task-tags">{task.tags.join(', ')}</span></p>
               )}
               {task.comentarios && task.comentarios.length > 0 && (
-                <div>
+                <div className="task-comments">
                   <h5>Comentários:</h5>
-                  <ul style={{ listStyle: 'disc', marginLeft: '20px' }}>
+                  <ul className="comments-sub-list">
                     {task.comentarios.map((comment, idx) => (
                       <li key={idx}>
-                        <strong>{comment.autor}</strong> ({comment.data}):{' '}
+                        <strong>{comment.autor}</strong> ({new Date(comment.data).toLocaleDateString()}):{' '}
                         {comment.comentario}
                       </li>
                     ))}

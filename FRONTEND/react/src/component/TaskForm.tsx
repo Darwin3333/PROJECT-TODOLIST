@@ -1,28 +1,10 @@
 // src/components/TaskForm.tsx
 import React, { useState } from 'react';
 import axios from 'axios';
+import type{ CommentPayload, TaskPayload, TaskFormProps } from '../types/interfaces';
+import './TaskForm.css';
 
-// Definindo a interface para os dados do Comentário
-// Deve corresponder ao seu Comentario do FastAPI
-interface CommentPayload {
-  autor: string;
-  comentario: string;
-  data: string; // A data será gerada no backend, mas o modelo a espera
-}
-
-interface TaskPayload {
-  titulo: string;
-  descricao: string;
-  status: 'pendente' | 'em andamento' | 'concluída';
-  tags: string[];
-  comentarios: CommentPayload[];
-}
-
-interface TaskFormProps {
-  onTaskAdded: () => void;
-}
-
-const TaskForm: React.FC<TaskFormProps> = ({ onTaskAdded }) => {
+const TaskForm = ({ onTaskAdded } : TaskFormProps) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
   const [status, setStatus] = useState<TaskPayload['status']>('pendente');
@@ -126,60 +108,39 @@ const TaskForm: React.FC<TaskFormProps> = ({ onTaskAdded }) => {
 
   return (
     <div
-      style={{
-        padding: '20px',
-        border: '1px solid #ccc',
-        borderRadius: '8px',
-        marginBottom: '20px',
-      }}
+      className='task-form-container'
     >
       <h2>Adicionar Nova Tarefa</h2>
       <form onSubmit={handleSubmit}>
         {/* Campos Título, Descrição, Status - permanecem os mesmos */}
-        <div style={{ marginBottom: '10px' }}>
-          <label
-            htmlFor="titulo"
-            style={{ display: 'block', marginBottom: '5px' }}
-          >
-            Título:
-          </label>
+        <div className='form-group'>
+          <label htmlFor="titulo">Título:</label>
           <input
             type="text"
             id="titulo"
             value={titulo}
             onChange={(e) => setTitulo(e.target.value)}
             required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
           />
         </div>
-        <div style={{ marginBottom: '10px' }}>
-          <label
-            htmlFor="descricao"
-            style={{ display: 'block', marginBottom: '5px' }}
-          >
-            Descrição:
-          </label>
+
+        <div className='form-group'>
+          <label htmlFor="descricao">Descrição:</label>
           <textarea
             id="descricao"
             value={descricao}
             onChange={(e) => setDescricao(e.target.value)}
             required
             rows={3}
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
           ></textarea>
         </div>
-        <div style={{ marginBottom: '10px' }}>
-          <label
-            htmlFor="status"
-            style={{ display: 'block', marginBottom: '5px' }}
-          >
-            Status:
-          </label>
+
+        <div className='form-group'>
+          <label htmlFor="status">Status:</label>
           <select
             id="status"
             value={status}
             onChange={(e) => setStatus(e.target.value as TaskPayload['status'])}
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
           >
             <option value="pendente">Pendente</option>
             <option value="em andamento">Em Andamento</option>
@@ -188,73 +149,34 @@ const TaskForm: React.FC<TaskFormProps> = ({ onTaskAdded }) => {
         </div>
 
         {/* Campo para Tags */}
-        <div
-          style={{
-            marginBottom: '15px',
-            border: '1px solid #eee',
-            padding: '10px',
-            borderRadius: '5px',
-            backgroundColor: '#fdfdfd',
-          }}
-        >
-          <label
-            htmlFor="tagInput"
-            style={{ display: 'block', marginBottom: '5px' }}
-          >
-            Adicionar Tags:
-          </label>
-          <div style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
+        <div className="tags-section">
+          <label htmlFor="tagInput">Adicionar Tags:</label>
+          <div className="tag-input-group">
             <input
               type="text"
               id="tagInput"
               value={currentTag}
               onChange={(e) => setCurrentTag(e.target.value)}
               placeholder="Ex: Urgente, Estudo"
-              style={{ flexGrow: 1, padding: '8px', boxSizing: 'border-box' }}
             />
             <button
               type="button"
               onClick={handleAddTag}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
+              className="add-tag-button"
             >
               Adicionar Tag
             </button>
           </div>
+
           {tags.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+            <div className="tags-list">
               {tags.map((tag, index) => (
-                <span
-                  key={index}
-                  style={{
-                    backgroundColor: '#e0e0e0',
-                    padding: '5px 10px',
-                    borderRadius: '15px',
-                    fontSize: '0.9em',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                  }}
-                >
+                <span key={index} className="tag-item">
                   {tag}
                   <button
                     type="button"
                     onClick={() => handleRemoveTag(tag)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#888',
-                      cursor: 'pointer',
-                      fontSize: '1.1em',
-                      lineHeight: '1',
-                      padding: '0',
-                    }}
+                    className="remove-tag-button"
                   >
                     &times;
                   </button>
@@ -265,86 +187,44 @@ const TaskForm: React.FC<TaskFormProps> = ({ onTaskAdded }) => {
         </div>
 
         {/* Campo para Comentários */}
-        <div
-          style={{
-            marginBottom: '15px',
-            border: '1px solid #eee',
-            padding: '10px',
-            borderRadius: '5px',
-            backgroundColor: '#fdfdfd',
-          }}
+        <div className="comments-section"
         >
-          <label style={{ display: 'block', marginBottom: '5px' }}>
-            Adicionar Comentários:
-          </label>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '5px',
-              marginBottom: '10px',
-            }}
-          >
+          <label>Adicionar Comentários:</label>
+          <div className="comment-input-group">
             <input
               type="text"
               value={commentAutor}
               onChange={(e) => setCommentAutor(e.target.value)}
               placeholder="Seu nome"
-              style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
             />
             <textarea
               value={currentCommentText}
               onChange={(e) => setCurrentCommentText(e.target.value)}
               placeholder="Seu comentário..."
               rows={2}
-              style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
             ></textarea>
             <button
               type="button"
               onClick={handleAddComment}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: '#17a2b8',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                alignSelf: 'flex-start',
-              }}
+              className="add-comment-button"
             >
               Adicionar Comentário
             </button>
           </div>
+
           {comments.length > 0 && (
-            <div>
-              <h5 style={{ marginBottom: '5px' }}>Comentários Adicionados:</h5>
-              <ul style={{ listStyle: 'none', paddingLeft: '0' }}>
+            <div className="comments-list-container">
+              <h5>Comentários Adicionados:</h5>
+              <ul className="comments-list">
                 {comments.map((comment, index) => (
-                  <li
-                    key={index}
-                    style={{
-                      background: '#e9ecef',
-                      padding: '8px',
-                      borderRadius: '4px',
-                      marginBottom: '5px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
+                  <li key={index} className="comment-item">
                     <div>
                       <strong>{comment.autor}</strong>: {comment.comentario}
                     </div>
                     <button
                       type="button"
                       onClick={() => handleRemoveComment(index)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#dc3545',
-                        cursor: 'pointer',
-                        fontSize: '1.1em',
-                      }}
+                      className="remove-comment-button"
                     >
                       &times;
                     </button>
@@ -358,21 +238,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ onTaskAdded }) => {
         <button
           type="submit"
           disabled={loading}
-          style={{
-            padding: '10px 15px',
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: loading ? 'not-allowed' : 'pointer',
-          }}
+          className="submit-button"
         >
           {loading ? 'Adicionando...' : 'Adicionar Tarefa'}
         </button>
       </form>
-      {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
+      {error && <p className="error-message">{error}</p>}
       {success && (
-        <p style={{ color: 'green', marginTop: '10px' }}>{success}</p>
+        <p className="success-message">{success}</p>
       )}
     </div>
   );
