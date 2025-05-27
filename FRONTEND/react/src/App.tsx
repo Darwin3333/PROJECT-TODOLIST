@@ -4,8 +4,8 @@ import axios from 'axios';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'; // Importa para rotas
-import TaskForm from './component/TaskForm'; // Caminho ajustado
-import CustomNavbar from './component/Navbar'; // Importa o novo Navbar
+import TaskForm from './components/TaskForm'; // Caminho ajustado (agora também para edição)
+import CustomNavbar from './components/Navbar'; // Importa o novo Navbar
 import type { Task, User } from './types/interfaces';
 import './App.css';
 
@@ -16,6 +16,10 @@ function App() {
 
   const [showViewModal, setShowViewModal] = useState<boolean>(false);
   const [taskToView, setTaskToView] = useState<Task | null>(null);
+
+   // Estados para o Modal de Edição
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null); // Armazena a tarefa a ser editada
 
   // Estado para o usuário atualmente logado
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -63,6 +67,7 @@ function App() {
     fetchTasks();
   }, []);
 
+  // Função para recarregar a lista após a criação/edição de uma tarefa
   const handleTaskAdded = () => {
     fetchTasks();
   };
@@ -78,8 +83,20 @@ function App() {
   };
 
   const handleEditTask = (taskId: string) => {
-    console.log('Editar tarefa:', taskId);
-    // Lógica para carregar dados da tarefa em um formulário de edição (próximo passo)
+    const taskFound = tasks.find(task => task.id === taskId);
+    if (taskFound) {
+      setTaskToEdit(taskFound); // Define a tarefa a ser editada
+      setShowEditModal(true);   // Abre o modal de edição
+    } else {
+      console.warn(`Tarefa com ID ${taskId} não encontrada para edição.`);
+      alert("Tarefa não encontrada para edição. Tente recarregar a página.");
+    }
+  };
+
+  // Função para fechar o modal de edição
+  const handleCloseEditModal = () => {
+    setShowEditModal(false);
+    setTaskToEdit(null); // Limpa a tarefa a ser editada
   };
 
   const handleDeleteTask = async (taskId: string) => {
@@ -117,7 +134,6 @@ function App() {
       <div className="container mt-4">
         <div className="row">
           <div className="col-md-8 offset-md-2">
-            <h1 className="text-center mb-4">Minha Lista de Tarefas</h1>
 
             <Routes> {/* Define as rotas do aplicativo */}
               <Route path="/" element={ // Rota para listar tarefas (página inicial)
@@ -162,6 +178,7 @@ function App() {
                               </small>
                             </p>
                             <div className="mt-3 d-flex justify-content-end">
+
                               <button
                                 className="btn btn-outline-primary btn-sm me-2"
                                 onClick={() => handleViewTask(task)}
@@ -170,6 +187,7 @@ function App() {
                                 👁️{' '}
                                 <span className="d-none d-md-inline">Visualizar</span>
                               </button>
+
                               <button
                                 className="btn btn-outline-warning btn-sm me-2"
                                 onClick={() => handleEditTask(task.id)}
@@ -177,6 +195,7 @@ function App() {
                               >
                                 ✏️ <span className="d-none d-md-inline">Editar</span>
                               </button>
+
                               <button
                                 className="btn btn-outline-danger btn-sm"
                                 onClick={() => handleDeleteTask(task.id)}
@@ -194,11 +213,12 @@ function App() {
               } />
               <Route path="/adicionar-tarefa" element={ // Rota para adicionar tarefa
                 <>
-                  <TaskForm onTaskAdded={handleTaskAdded} currentUser={currentUser}/>
+                  <TaskForm onTaskAdded={handleTaskAdded} currentUser={currentUser} />
                   <hr className="my-4" />
                 </>
               } />
-
+              {/* Opcional: Se você tinha uma rota de dashboard, pode adicioná-la aqui */}
+              {/* <Route path="/dashboard" element={<Dashboard currentUser={currentUser} />} /> */}
             </Routes>
 
             {/* Modal de Visualização de Tarefa (mantém fora das rotas para ser global) */}
@@ -234,13 +254,13 @@ function App() {
                     {new Date(taskToView.data_criacao).toLocaleTimeString()}
                   </p>
 
-                  {/* NOVO: Exibir quem fez a tarefa */}
+                  {/* Exibir quem fez a tarefa */}
                   {taskToView.user_id && ( // Só mostra se o user_id existir na tarefa
-                  <p>
-                <strong>Criado por:</strong>{' '}
-                {getUsernameById(taskToView.user_id)} {/* Usa a função para pegar o nome */}
-              </p>
-            )}
+                    <p>
+                      <strong>Criado por:</strong>{' '}
+                      {getUsernameById(taskToView.user_id)} {/* Usa a função para pegar o nome */}
+                    </p>
+                  )}
 
                   {taskToView.tags && taskToView.tags.length > 0 && (
                     <div className="mt-3">
@@ -283,9 +303,36 @@ function App() {
                 </Modal.Footer>
               </Modal>
             )}
-          </div>
-        </div>
-      </div>
+
+            {/* Modal de Edição de Tarefa (Adicionado aqui, fora das rotas) */}
+            {taskToEdit && ( // Só renderiza se houver uma tarefa para editar
+              <Modal
+                show={showEditModal}
+                onHide={handleCloseEditModal}
+                size="lg" // Pode ser 'sm', 'md', 'lg', 'xl'
+                centered // Centraliza o modal na tela
+              >
+                <Modal.Header closeButton>
+                  <Modal.Title>Editar Tarefa</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                  {/* Reutiliza o TaskForm, passando a tarefa para edição */}
+                  <TaskForm
+                    taskToEdit={taskToEdit} // Passa a tarefa a ser editada
+                    onTaskUpdated={() => { // Callback para quando a tarefa for atualizada
+                      fetchTasks(); // Recarrega a lista de tarefas
+                      handleCloseEditModal(); // Fecha o modal após a atualização
+                    }}
+                    onClose={handleCloseEditModal} // Passa o método para fechar o modal
+                    currentUser={currentUser} // Passa o currentUser, mesmo na edição
+                  />
+                </Modal.Body>
+                {/* Modal.Footer não é necessário aqui, pois o formulário tem os botões */}
+              </Modal>
+            )}
+          </div> {/* Fecha a div col-md-8 offset-md-2 */}
+        </div> {/* Fecha a div row */}
+      </div> {/* Fecha a div container mt-4 */}
     </Router>
   );
 }

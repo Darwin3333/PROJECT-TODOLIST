@@ -1,15 +1,17 @@
 // src/components/TaskForm.tsx
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
-import type{ CommentPayload, TaskPayload, User} from '../types/interfaces';
+import type{ CommentPayload, TaskPayload, User, Task} from '../types/interfaces';
 import './TaskForm.css';
 
 export interface TaskFormProps {
-  onTaskAdded: () => void;
-  currentUser: User | null; // Adicione esta linha
+  onTaskAdded?: () => void; // Opcional, pois na edição usaremos onTaskUpdated
+  onTaskUpdated?: () => void; // NOVO: Callback para quando a tarefa for atualizada
+  onClose?: () => void; // NOVO: Para fechar o modal, se TaskForm estiver dentro de um
+  currentUser: User | null;
+  taskToEdit?: Task | null; // NOVO: A tarefa a ser editada (opcional)
 }
-
-const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
+const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit } : TaskFormProps) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
   const [status, setStatus] = useState<TaskPayload['status']>('pendente');
@@ -26,6 +28,29 @@ const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (taskToEdit) {
+      setTitulo(taskToEdit.titulo);
+      setDescricao(taskToEdit.descricao);
+      setStatus(taskToEdit.status);
+      setTags(taskToEdit.tags || []); // Garante que tags é um array
+      setComments(taskToEdit.comentarios || []); // Garante que comments é um array
+      setError(null);
+      setSuccess(null);
+    } else {
+      // Limpa o formulário se não estiver em modo edição (para nova tarefa)
+      setTitulo('');
+      setDescricao('');
+      setStatus('pendente');
+      setTags([]);
+      setComments([]);
+      setCommentAutor('');
+      setCurrentCommentText('');
+      setError(null);
+      setSuccess(null);
+    }
+  }, [taskToEdit]); // Dependência: executa quando taskToEdit muda
 
   // Função para adicionar uma tag
   const handleAddTag = () => {
@@ -60,60 +85,82 @@ const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
     setComments(comments.filter((_, index) => index !== indexToRemove));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setSuccess(null);
 
-     // Adicione esta verificação se a tarefa SÓ PODE ser criada por um usuário logado
-    if (!currentUser) {
+    // Se estiver criando e não houver usuário logado
+    if (!taskToEdit && !currentUser) {
       setError("Por favor, faça login para criar uma tarefa.");
       setLoading(false);
-      return; // Impede a submissão se não houver usuário logado
-    }    
+      return;
+    }
 
-    const newTask: TaskPayload = {
+    const taskData: TaskPayload = {
       titulo,
       descricao,
       status,
-      tags, // Envia as tags que o usuário adicionou
-      comentarios: comments, // Envia os comentários que o usuário adicionou
-      user_id: currentUser.id
+      tags,
+      comentarios: comments,
+      user_id: currentUser?.id // user_id só é necessário na criação, mas pode ser enviado na atualização
     };
 
     try {
-      const response = await axios.post(
-        'http://localhost:8000/tarefas/',
-        newTask
-      );
-
-      setSuccess(
-        `Tarefa "${response.data.titulo}" (ID: ${response.data.id}) criada com sucesso!`
-      );
-
-      // Limpa o formulário
-      setTitulo('');
-      setDescricao('');
-      setStatus('pendente');
-      setTags([]); // Limpa as tags
-      setCurrentTag('');
-      setComments([]); // Limpa os comentários
-      setCommentAutor('');
-      setCurrentCommentText('');
-
-      if (onTaskAdded) {
-        onTaskAdded();
+      let response;
+      if (taskToEdit) {
+        // Modo Edição: Faz um PUT
+        response = await axios.put(
+          `http://localhost:8000/tarefas/${taskToEdit.id}`,
+          taskData // Envia todos os campos, mesmo que nem todos sejam atualizáveis no backend
+        );
+        setSuccess(
+          `Tarefa "${response.data.titulo}" (ID: ${response.data.id}) atualizada com sucesso!`
+        );
+        if (onTaskUpdated) {
+          onTaskUpdated(); // Chama o callback de atualização
+        }
+      } else {
+        // Modo Criação: Faz um POST
+        response = await axios.post(
+          'http://localhost:8000/tarefas/',
+          taskData
+        );
+        setSuccess(
+          `Tarefa "${response.data.titulo}" (ID: ${response.data.id}) criada com sucesso!`
+        );
+        if (onTaskAdded) {
+          onTaskAdded(); // Chama o callback de adição
+        }
       }
+
+      // Limpa o formulário APENAS se estiver no modo de criação ou se o modal for fechado
+      if (!taskToEdit) { // Limpa apenas se for criação
+        setTitulo('');
+        setDescricao('');
+        setStatus('pendente');
+        setTags([]);
+        setCurrentTag('');
+        setComments([]);
+        setCommentAutor('');
+        setCurrentCommentText('');
+      }
+
+      // Opcional: fechar o modal automaticamente após um sucesso na edição
+      if (taskToEdit && onClose) {
+          setTimeout(() => onClose(), 1500); // Fecha após 1.5s
+      }
+
     } catch (err: any) {
       if (axios.isAxiosError(err) && err.response) {
         setError(
-          `Erro ao criar tarefa: ${err.response.data.detail || err.message}`
+          `Erro ao ${taskToEdit ? 'atualizar' : 'criar'} tarefa: ${err.response.data.detail || err.message}`
         );
       } else {
         setError(`Erro desconhecido: ${err.message}`);
       }
-      console.error('Erro na criação da tarefa:', err);
+      console.error(`Erro na ${taskToEdit ? 'atualização' : 'criação'} da tarefa:`, err);
     } finally {
       setLoading(false);
     }
@@ -123,7 +170,7 @@ const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
     <div
       className='task-form-container'
     >
-      <h2>Adicionar Nova Tarefa</h2>
+      <h2>{taskToEdit ? `Editar Tarefa: ${taskToEdit.titulo}` : 'Adicionar Nova Tarefa'}</h2>
       <form onSubmit={handleSubmit}>
         {/* Campos Título, Descrição, Status - permanecem os mesmos */}
         <div className='form-group'>
@@ -253,8 +300,18 @@ const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
           disabled={loading}
           className="submit-button"
         >
-          {loading ? 'Adicionando...' : 'Adicionar Tarefa'}
+          {loading ? (taskToEdit ? 'Atualizando...' : 'Adicionando...') : (taskToEdit ? 'Salvar Alterações' : 'Adicionar Tarefa')}
         </button>
+
+        {taskToEdit && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-secondary ms-2"
+            >
+              Cancelar
+            </button>
+        )}
       </form>
       {error && <p className="error-message">{error}</p>}
       {success && (
