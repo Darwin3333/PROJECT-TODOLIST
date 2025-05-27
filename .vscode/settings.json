@@ -14,6 +14,5 @@
     "**/package-lock.json": true,
     "**/.gitignore": true,
     "**/src/vite-env.d.ts": true
-  },
-  "editor.fontSize": 18
+  }
 }
