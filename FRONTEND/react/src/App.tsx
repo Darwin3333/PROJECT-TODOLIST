@@ -20,10 +20,21 @@ function App() {
   // Estado para o usuário atualmente logado
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
+  const userMap: { [key: string]: string } = {
+    '1': 'Matheus',
+    '2': 'Bruno',
+    // Adicione outros usuários de teste conforme necessário
+  }
+
   // Função para simular o login, recebendo o objeto User
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     alert(`Usuário ${user.username} logado!`);
+  };
+
+  const getUsernameById = (userId: string | undefined): string => {
+    if (!userId) return 'Desconhecido';
+    return userMap[userId] || `Usuário ID: ${userId}`; // Retorna o nome ou o ID se não encontrar no mapa
   };
 
   // Função para simular o logout
@@ -183,12 +194,12 @@ function App() {
               } />
               <Route path="/adicionar-tarefa" element={ // Rota para adicionar tarefa
                 <>
-                  <TaskForm onTaskAdded={handleTaskAdded} />
+                  <TaskForm onTaskAdded={handleTaskAdded} currentUser={currentUser}/>
                   <hr className="my-4" />
                 </>
               } />
+            {/* NOVO: Rota para o Dashboard */}
             </Routes>
-
 
             {/* Modal de Visualização de Tarefa (mantém fora das rotas para ser global) */}
             {taskToView && (
@@ -222,6 +233,14 @@ function App() {
                     {new Date(taskToView.data_criacao).toLocaleDateString()} às{' '}
                     {new Date(taskToView.data_criacao).toLocaleTimeString()}
                   </p>
+
+                  {/* NOVO: Exibir quem fez a tarefa */}
+                  {taskToView.user_id && ( // Só mostra se o user_id existir na tarefa
+                  <p>
+                <strong>Criado por:</strong>{' '}
+                {getUsernameById(taskToView.user_id)} {/* Usa a função para pegar o nome */}
+              </p>
+            )}
 
                   {taskToView.tags && taskToView.tags.length > 0 && (
                     <div className="mt-3">

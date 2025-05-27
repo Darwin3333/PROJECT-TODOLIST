@@ -10,10 +10,7 @@ export interface TaskPayload {
   status: 'pendente' | 'em andamento' | 'concluída';
   tags: string[];
   comentarios: CommentPayload[];
-}
-
-export interface TaskFormProps {
-  onTaskAdded: () => void;
+  user_id?: string
 }
 
 export interface Task extends TaskPayload {

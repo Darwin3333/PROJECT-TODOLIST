@@ -31,6 +31,7 @@ const CustomNavbar = ({ currentUser, onLogin, onLogout } : CustomNavbarProps) =>
           <Nav className="me-auto">
             <Nav.Link as={Link} to="/">Listar Tarefas</Nav.Link>
             <Nav.Link as={Link} to="/adicionar-tarefa">Adicionar Tarefas</Nav.Link>
+            
           </Nav>
           <Nav>
             {currentUser ? (

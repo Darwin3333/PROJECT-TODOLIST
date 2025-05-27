@@ -1,10 +1,15 @@
 // src/components/TaskForm.tsx
 import React, { useState } from 'react';
 import axios from 'axios';
-import type{ CommentPayload, TaskPayload, TaskFormProps } from '../types/interfaces';
+import type{ CommentPayload, TaskPayload, User} from '../types/interfaces';
 import './TaskForm.css';
 
-const TaskForm = ({ onTaskAdded } : TaskFormProps) => {
+export interface TaskFormProps {
+  onTaskAdded: () => void;
+  currentUser: User | null; // Adicione esta linha
+}
+
+const TaskForm = ({ onTaskAdded, currentUser } : TaskFormProps) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
   const [status, setStatus] = useState<TaskPayload['status']>('pendente');
@@ -61,12 +66,20 @@ const TaskForm = ({ onTaskAdded } : TaskFormProps) => {
     setError(null);
     setSuccess(null);
 
+     // Adicione esta verificação se a tarefa SÓ PODE ser criada por um usuário logado
+    if (!currentUser) {
+      setError("Por favor, faça login para criar uma tarefa.");
+      setLoading(false);
+      return; // Impede a submissão se não houver usuário logado
+    }    
+
     const newTask: TaskPayload = {
       titulo,
       descricao,
       status,
       tags, // Envia as tags que o usuário adicionou
       comentarios: comments, // Envia os comentários que o usuário adicionou
+      user_id: currentUser.id
     };
 
     try {

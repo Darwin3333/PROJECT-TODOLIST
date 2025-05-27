@@ -50,8 +50,7 @@ class TarefaBase(BaseModel):
     user_id: Optional[str] = None
 
 class TarefaCreate(TarefaBase):
-    pass # Herda de TarefaBase para criação
-    user_id: str # Agora é obrigatório ao criar, vindo do frontend
+    user_id: str
 
 class TarefaUpdate(BaseModel):
     titulo: Optional[str] = None
