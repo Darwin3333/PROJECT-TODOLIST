@@ -6,7 +6,7 @@ import Button from 'react-bootstrap/Button';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import TaskForm from './components/TaskForm';
 import CustomNavbar from './components/Navbar';
-// IMPORTAR TaskSearch
+import Dashboard from './components/Dashboard';
 import TaskSearch from './components/TaskSearch'; // <--- NOVA IMPORTAÇÃO
 import type { Task, User } from './types/interfaces';
 import './App.css';
@@ -178,6 +178,8 @@ function App() {
           <div className="col-md-8 offset-md-2">
 
             <Routes>
+
+      <Route path="/dashboard" element={<Dashboard currentUser={currentUser} />} />
               <Route path="/" element={
                 <>
                   <TaskSearch onSearch={handleSearchSubmit} onClear={handleClearSearch} />
