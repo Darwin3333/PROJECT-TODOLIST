@@ -3,9 +3,11 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'; // Importa para rotas
-import TaskForm from './components/TaskForm'; // Caminho ajustado (agora também para edição)
-import CustomNavbar from './components/Navbar'; // Importa o novo Navbar
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import TaskForm from './components/TaskForm';
+import CustomNavbar from './components/Navbar';
+// IMPORTAR TaskSearch
+import TaskSearch from './components/TaskSearch'; // <--- NOVA IMPORTAÇÃO
 import type { Task, User } from './types/interfaces';
 import './App.css';
 
@@ -23,6 +25,10 @@ function App() {
 
   // Estado para o usuário atualmente logado
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // NOVO ESTADO: Armazenar os filtros de pesquisa atuais
+  const [currentSearchFilters, setCurrentSearchFilters] = useState<{ status?: string; date?: string; tag?: string }>({});
+
 
   const userMap: { [key: string]: string } = {
     '1': 'Matheus',
@@ -47,29 +53,66 @@ function App() {
     alert('Logout realizado!');
   };
 
-  const fetchTasks = async () => {
+  // MUDANÇA AQUI: fetchTasks agora pode receber filtros
+  const fetchTasks = async (filters: { status?: string; date?: string; tag?: string } = {}) => {
     setLoadingTasks(true);
     setErrorTasks(null);
     try {
-      const response = await axios.get<Task[]>(
-        'http://localhost:8000/tarefas/'
-      );
+      let url = 'http://localhost:8000/tarefas/';
+      let params: any = {};
+
+      if (Object.keys(filters).length > 0) {
+        url = 'http://localhost:8000/tarefas/buscar/';
+        params = filters; // Se houver filtros, usa a rota de busca e os parâmetros
+      }
+
+      const response = await axios.get<Task[]>(url, { params });
       setTasks(response.data);
+      // Se a busca retornar 404 por nenhum resultado, a requisição irá para o catch
+      // Mas se o backend retornar [], isso será tratado aqui
     } catch (err: any) {
-      setErrorTasks(`Erro ao carregar tarefas: ${err.message}`);
-      console.error('Erro ao carregar tarefas:', err);
+      // Melhorar o tratamento de erros para a busca
+      if (axios.isAxiosError(err) && err.response) {
+        if (err.response.status === 404 && Object.keys(filters).length > 0) {
+            // Se for 404 na busca e houver filtros, significa "nenhum resultado"
+            setTasks([]); // Limpa a lista de tarefas
+            setErrorTasks("Nenhuma tarefa encontrada com os critérios fornecidos.");
+        } else if (err.response.status === 400 && Object.keys(filters).length === 0) {
+            // Se for 400 na busca sem filtros, significa que o backend exigiu filtros
+            // (se você manter a HTTPException para "Forneça ao menos um critério")
+            setErrorTasks(`Erro de busca: ${err.response.data.detail || err.message}`);
+            setTasks([]);
+        } else {
+            setErrorTasks(`Erro ao carregar tarefas: ${err.response.data.detail || err.message}`);
+            console.error('Erro ao carregar tarefas:', err);
+        }
+      } else {
+        setErrorTasks(`Erro desconhecido ao carregar tarefas: ${err.message}`);
+        console.error('Erro ao carregar tarefas:', err);
+      }
     } finally {
       setLoadingTasks(false);
     }
   };
 
+  // MUDANÇA AQUI: Dispara fetchTasks com os filtros ao montar
   useEffect(() => {
-    fetchTasks();
-  }, []);
+    fetchTasks(currentSearchFilters); // Carrega com os filtros iniciais (vazios)
+  }, [currentSearchFilters]); // Recarrega quando os filtros de busca mudam
 
-  // Função para recarregar a lista após a criação/edição de uma tarefa
+  // NOVO: Função para lidar com a submissão da pesquisa
+  const handleSearchSubmit = (filters: { status?: string; date?: string; tag?: string }) => {
+    setCurrentSearchFilters(filters); // Atualiza os filtros, o useEffect acima fará a busca
+  };
+
+  // NOVO: Função para limpar a pesquisa
+  const handleClearSearch = () => {
+    setCurrentSearchFilters({}); // Limpa os filtros, o useEffect acima fará a busca completa
+    setErrorTasks(null); // Limpa mensagens de erro de busca
+  };
+
   const handleTaskAdded = () => {
-    fetchTasks();
+    fetchTasks({}); // Recarrega todas as tarefas após adicionar/atualizar
   };
 
   const handleViewTask = (task: Task) => {
@@ -85,25 +128,24 @@ function App() {
   const handleEditTask = (taskId: string) => {
     const taskFound = tasks.find(task => task.id === taskId);
     if (taskFound) {
-      setTaskToEdit(taskFound); // Define a tarefa a ser editada
-      setShowEditModal(true);   // Abre o modal de edição
+      setTaskToEdit(taskFound);
+      setShowEditModal(true);
     } else {
       console.warn(`Tarefa com ID ${taskId} não encontrada para edição.`);
       alert("Tarefa não encontrada para edição. Tente recarregar a página.");
     }
   };
 
-  // Função para fechar o modal de edição
   const handleCloseEditModal = () => {
     setShowEditModal(false);
-    setTaskToEdit(null); // Limpa a tarefa a ser editada
+    setTaskToEdit(null);
   };
 
   const handleDeleteTask = async (taskId: string) => {
     if (window.confirm('Tem certeza que deseja excluir esta tarefa?')) {
       try {
         await axios.delete(`http://localhost:8000/tarefas/${taskId}`);
-        fetchTasks();
+        fetchTasks({}); // Recarrega todas as tarefas após a exclusão
       } catch (err: any) {
         setErrorTasks(`Erro ao excluir tarefa: ${err.message}`);
         console.error('Erro ao excluir tarefa:', err);
@@ -125,7 +167,7 @@ function App() {
   };
 
   return (
-    <Router> {/* Envolve todo o aplicativo com o Router */}
+    <Router>
       <CustomNavbar
         currentUser={currentUser}
         onLogin={handleLogin}
@@ -135,9 +177,11 @@ function App() {
         <div className="row">
           <div className="col-md-8 offset-md-2">
 
-            <Routes> {/* Define as rotas do aplicativo */}
-              <Route path="/" element={ // Rota para listar tarefas (página inicial)
+            <Routes>
+              <Route path="/" element={
                 <>
+                  <TaskSearch onSearch={handleSearchSubmit} onClear={handleClearSearch} />
+
                   <h3>Tarefas Cadastradas</h3>
                   {loadingTasks ? (
                     <div className="alert alert-info" role="alert">
@@ -146,6 +190,10 @@ function App() {
                   ) : errorTasks ? (
                     <div className="alert alert-danger" role="alert">
                       {errorTasks}
+                    </div>
+                  ) : tasks.length === 0 && Object.keys(currentSearchFilters).length > 0 ? (
+                    <div className="alert alert-light" role="alert">
+                      Nenhuma tarefa encontrada com os critérios fornecidos.
                     </div>
                   ) : tasks.length === 0 ? (
                     <div className="alert alert-light" role="alert">
@@ -178,30 +226,27 @@ function App() {
                               </small>
                             </p>
                             <div className="mt-3 d-flex justify-content-end">
-
                               <button
-                                className="btn btn-outline-primary btn-sm me-2"
+                                className="btn btn-outline-info btn-sm me-2"
                                 onClick={() => handleViewTask(task)}
                                 title="Visualizar"
                               >
-                                👁️{' '}
+                                {' '}
                                 <span className="d-none d-md-inline">Visualizar</span>
                               </button>
-
                               <button
                                 className="btn btn-outline-warning btn-sm me-2"
                                 onClick={() => handleEditTask(task.id)}
                                 title="Editar"
                               >
-                                ✏️ <span className="d-none d-md-inline">Editar</span>
+                                <span className="d-none d-md-inline">Editar</span>
                               </button>
-
                               <button
                                 className="btn btn-outline-danger btn-sm"
                                 onClick={() => handleDeleteTask(task.id)}
                                 title="Excluir"
                               >
-                                🗑️ <span className="d-none d-md-inline">Excluir</span>
+                                <span className="d-none d-md-inline">Excluir</span>
                               </button>
                             </div>
                           </div>
@@ -211,17 +256,15 @@ function App() {
                   )}
                 </>
               } />
-              <Route path="/adicionar-tarefa" element={ // Rota para adicionar tarefa
+              <Route path="/adicionar-tarefa" element={
                 <>
                   <TaskForm onTaskAdded={handleTaskAdded} currentUser={currentUser} />
                   <hr className="my-4" />
                 </>
               } />
-              {/* Opcional: Se você tinha uma rota de dashboard, pode adicioná-la aqui */}
-              {/* <Route path="/dashboard" element={<Dashboard currentUser={currentUser} />} /> */}
             </Routes>
 
-            {/* Modal de Visualização de Tarefa (mantém fora das rotas para ser global) */}
+            {/* Modal de Visualização de Tarefa */}
             {taskToView && (
               <Modal
                 show={showViewModal}
@@ -254,11 +297,10 @@ function App() {
                     {new Date(taskToView.data_criacao).toLocaleTimeString()}
                   </p>
 
-                  {/* Exibir quem fez a tarefa */}
-                  {taskToView.user_id && ( // Só mostra se o user_id existir na tarefa
+                  {taskToView.user_id && (
                     <p>
                       <strong>Criado por:</strong>{' '}
-                      {getUsernameById(taskToView.user_id)} {/* Usa a função para pegar o nome */}
+                      {getUsernameById(taskToView.user_id)}
                     </p>
                   )}
 
@@ -304,35 +346,34 @@ function App() {
               </Modal>
             )}
 
-            {/* Modal de Edição de Tarefa (Adicionado aqui, fora das rotas) */}
-            {taskToEdit && ( // Só renderiza se houver uma tarefa para editar
+            {/* Modal de Edição de Tarefa */}
+            {/* O Modal.Header não tem Modal.Title porque o TaskForm agora cuida disso */}
+            {taskToEdit && (
               <Modal
                 show={showEditModal}
                 onHide={handleCloseEditModal}
-                size="lg" // Pode ser 'sm', 'md', 'lg', 'xl'
-                centered // Centraliza o modal na tela
+                size="lg"
+                centered
               >
                 <Modal.Header closeButton>
-                  <Modal.Title>Editar Tarefa</Modal.Title>
+                  {/* Título será renderizado pelo TaskForm */}
                 </Modal.Header>
                 <Modal.Body>
-                  {/* Reutiliza o TaskForm, passando a tarefa para edição */}
                   <TaskForm
-                    taskToEdit={taskToEdit} // Passa a tarefa a ser editada
-                    onTaskUpdated={() => { // Callback para quando a tarefa for atualizada
-                      fetchTasks(); // Recarrega a lista de tarefas
-                      handleCloseEditModal(); // Fecha o modal após a atualização
+                    taskToEdit={taskToEdit}
+                    onTaskUpdated={() => {
+                      fetchTasks(); // Recarrega a lista
+                      handleCloseEditModal(); // Fecha o modal
                     }}
-                    onClose={handleCloseEditModal} // Passa o método para fechar o modal
-                    currentUser={currentUser} // Passa o currentUser, mesmo na edição
+                    onClose={handleCloseEditModal}
+                    currentUser={currentUser}
                   />
                 </Modal.Body>
-                {/* Modal.Footer não é necessário aqui, pois o formulário tem os botões */}
               </Modal>
             )}
-          </div> {/* Fecha a div col-md-8 offset-md-2 */}
-        </div> {/* Fecha a div row */}
-      </div> {/* Fecha a div container mt-4 */}
+          </div>
+        </div>
+      </div>
     </Router>
   );
 }

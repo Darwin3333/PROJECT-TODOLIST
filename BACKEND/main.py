@@ -262,8 +262,6 @@ async def buscar_tarefas_por_criterio_rota(
             raise HTTPException(status_code=400, detail="Forneça ao menos um critério de busca (status, data_criacao ou tag).")
 
         tarefas = buscar_tarefas_por_criterio(filtro)
-        if not tarefas:
-            raise HTTPException(status_code=404, detail="Nenhuma tarefa encontrada com os critérios fornecidos.")
         return [TarefaInDB(**tarefa) for tarefa in tarefas]
     except Exception as e:
         traceback.print_exc()
