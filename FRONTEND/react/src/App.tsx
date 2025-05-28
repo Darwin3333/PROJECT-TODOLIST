@@ -327,10 +327,15 @@ function App() {
                             >
                               <p className="mb-0">
                                 <strong>{comment.autor}</strong>{' '}
-                                <small className="text-muted">
-                                  ({new Date(comment.data).toLocaleDateString()}):
-                                </small>
-                              </p>
+                                        {/* <--- MUDANÇA AQUI: Adicione uma verificação para comment.data */}
+                                {comment.data ? ( // Se comment.data existe, então tente formatar a data
+                                  <small className="text-muted">
+                                    ({new Date(comment.data).toLocaleDateString()}):
+                                  </small>
+                                  ) : (
+                                  <small className="text-muted"> (Data desconhecida):</small> // Opcional: fallback de texto
+                                  )}
+                                      </p>
                               <p className="mb-0">{comment.comentario}</p>
                             </li>
                           ))}

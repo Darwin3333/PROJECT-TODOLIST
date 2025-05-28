@@ -40,7 +40,7 @@ app.add_middleware(
 class Comentario(BaseModel):
     autor: str
     comentario: str
-    data: str # datetime pode ser usado se o frontend enviar neste formato, ou str para simplificar
+    data: Optional[datetime] = Field(None, description="Data e hora do comentário (gerada pelo servidor se não fornecida)")
 
 class TarefaBase(BaseModel):
     titulo: str
@@ -48,14 +48,19 @@ class TarefaBase(BaseModel):
     status: str = Field("pendente", pattern="^(pendente|em andamento|concluída)$") # Validação de status
     tags: List[str] = []
     user_id: Optional[str] = None
+    comentarios: List[Comentario] = [] # <--- GARANTA QUE ESTA LINHA ESTÁ AQUI
 
 class TarefaCreate(TarefaBase):
     user_id: str
 
 class TarefaUpdate(BaseModel):
     titulo: Optional[str] = None
-    descricao: Optional[str] = None # <-- Mantenha como Optional para atualizações parciais!
+    descricao: Optional[str] = None
     status: Optional[str] = Field(None, pattern="^(pendente|em andamento|concluída)$")
+    tags: Optional[List[str]] = None
+    # ESTE É O CAMPO CRUCIAL PARA ATUALIZAÇÃO
+    comentarios: Optional[List[Comentario]] = None # <--- GARANTA QUE ESTA LINHA ESTÁ AQUI
+
 
 
 class TarefaInDB(TarefaBase):

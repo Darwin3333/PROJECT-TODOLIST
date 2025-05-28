@@ -1,7 +1,7 @@
 export interface CommentPayload {
   autor: string;
   comentario: string;
-  data: string; // A data será gerada no backend, mas o modelo a espera
+  data?: string; // A data será gerada no backend, mas o modelo a espera
 }
 
 export interface TaskPayload {

@@ -21,7 +21,6 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
   const [tags, setTags] = useState<string[]>([]);
 
   // Estados para Comentários
-  const [commentAutor, setCommentAutor] = useState<string>('');
   const [currentCommentText, setCurrentCommentText] = useState<string>('');
   const [comments, setComments] = useState<CommentPayload[]>([]);
 
@@ -45,7 +44,6 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
       setStatus('pendente');
       setTags([]);
       setComments([]);
-      setCommentAutor('');
       setCurrentCommentText('');
       setError(null);
       setSuccess(null);
@@ -68,15 +66,20 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
 
   // Função para adicionar um comentário
   const handleAddComment = () => {
-    if (commentAutor.trim() && currentCommentText.trim()) {
+    if (!currentUser || !currentUser.username) {
+      setError("Você precisa estar logado para adicionar um comentário.");
+      return;
+    }
+
+    if (currentCommentText.trim()) { // Apenas verifica o texto do comentário, não o autor
       const newComment: CommentPayload = {
-        autor: commentAutor.trim(),
+        autor: currentUser.username, // <--- PEGA O NOME DE QUEM ESTÁ LOGADO
         comentario: currentCommentText.trim(),
-        data: new Date().toISOString(), // Data formatada para a UI, o backend vai gerar a dele
       };
       setComments([...comments, newComment]);
-      setCommentAutor('');
       setCurrentCommentText('');
+    } else {
+      setError("O comentário não pode ser vazio."); // Adicione esta mensagem de erro se o texto estiver vazio
     }
   };
 
@@ -98,12 +101,46 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
       return;
     }
 
+       // <--- ADICIONE ESTE BLOCO AGORA: INÍCIO DO TRATAMENTO DE COMENTÁRIOS PARA ENVIO
+    const formattedComments: CommentPayload[] = comments.map(comment => {
+        let commentData: string | undefined = undefined; // Inicializa como undefined
+
+        // Verifica se comment.data existe e é uma string (não nula/undefined)
+        if (comment.data && typeof comment.data === 'string') {
+            const trimmedData = comment.data.trim(); // Remove espaços em branco
+            if (trimmedData !== '') { // Verifica se a string não está vazia após trim
+                try {
+                    const dateObj = new Date(trimmedData);
+                    if (!isNaN(dateObj.getTime())) { // Verifica se a data é válida
+                        commentData = dateObj.toISOString(); // Converte para string ISO 8601
+                    } else {
+                        // Se a string de data é inválida, commentData permanece undefined
+                        console.warn("Invalid date string found in comment (will be omitted):", trimmedData);
+                    }
+                } catch (e) {
+                    // Erro ao tentar criar Date, então commentData permanece undefined
+                    console.warn("Error parsing comment date (will be omitted):", trimmedData, e);
+                }
+            }
+        }
+        // Se comment.data for undefined (comentário recém-adicionado localmente sem data),
+        // ou se for uma string vazia ou inválida, commentData permanecerá undefined.
+
+        return {
+            autor: comment.autor,
+            comentario: comment.comentario,
+            // Inclua a data apenas se ela for definida e válida
+            ...(commentData !== undefined && { data: commentData })
+        };
+    });
+    // <--- FIM DO BLOCO ADICIONADO
+
     const taskData: TaskPayload = {
       titulo,
       descricao,
       status,
       tags,
-      comentarios: comments,
+      comentarios: formattedComments,
       user_id: currentUser?.id // user_id só é necessário na criação, mas pode ser enviado na atualização
     };
 
@@ -143,7 +180,7 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
         setTags([]);
         setCurrentTag('');
         setComments([]);
-        setCommentAutor('');
+
         setCurrentCommentText('');
       }
 
@@ -170,7 +207,7 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
     <div
       className='task-form-container'
     >
-      <h2>{taskToEdit ? `Editar Tarefa: ${taskToEdit.titulo}` : 'Adicionar Nova Tarefa'}</h2>
+      <h2>{taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}</h2>
       <form onSubmit={handleSubmit}>
         {/* Campos Título, Descrição, Status - permanecem os mesmos */}
         <div className='form-group'>
@@ -251,12 +288,7 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
         >
           <label>Adicionar Comentários:</label>
           <div className="comment-input-group">
-            <input
-              type="text"
-              value={commentAutor}
-              onChange={(e) => setCommentAutor(e.target.value)}
-              placeholder="Seu nome"
-            />
+            
             <textarea
               value={currentCommentText}
               onChange={(e) => setCurrentCommentText(e.target.value)}
@@ -294,6 +326,17 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
             </div>
           )}
         </div>
+        
+        <div className='d-flex'>
+          {taskToEdit && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-secondary me-2 ms-2"
+            >
+              Cancelar
+            </button>
+        )}
 
         <button
           type="submit"
@@ -302,16 +345,9 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
         >
           {loading ? (taskToEdit ? 'Atualizando...' : 'Adicionando...') : (taskToEdit ? 'Salvar Alterações' : 'Adicionar Tarefa')}
         </button>
+        </div>
+        
 
-        {taskToEdit && onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn btn-secondary ms-2"
-            >
-              Cancelar
-            </button>
-        )}
       </form>
       {error && <p className="error-message">{error}</p>}
       {success && (

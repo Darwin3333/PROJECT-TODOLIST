@@ -13,7 +13,7 @@ def criar_tarefa(tarefa_data: dict):
     """
     # Adiciona data de criação e inicializa tags/comentários se não existirem
     if "data_criacao" not in tarefa_data:
-        tarefa_data["data_criacao"] = datetime.now().isoformat()
+        tarefa_data["data_criacao"] = datetime.now()
     if "tags" not in tarefa_data or not isinstance(tarefa_data["tags"], list):
         tarefa_data["tags"] = []
     if "comentarios" not in tarefa_data or not isinstance(tarefa_data["comentarios"], list):
@@ -28,37 +28,46 @@ def listar_tarefas():
     """
     tarefas_formatadas = []
     for tarefa_db in colecao_tarefas.find():
-        # <--- SUBSTITUA TODO O CONTEÚDO DO SEU LOOP for tarefa in colecao_tarefas.find(): POR ISSO:
         tarefa_formatada = {
-            "id": str(tarefa_db["_id"]),  # Transforma _id para id e string
+            "id": str(tarefa_db["_id"]),
             "titulo": tarefa_db.get("titulo"),
             "descricao": tarefa_db.get("descricao"),
             "status": tarefa_db.get("status"),
-            "user_id": tarefa_db.get("user_id"), # Incluir user_id ao listar
+            "user_id": tarefa_db.get("user_id"),
             "tags": tarefa_db.get("tags", []),
-            "comentarios": [] # Inicializa, vamos preencher e formatar os comentários
+            "comentarios": []
         }
 
-        # Formatação de data_criacao (sempre para ISO format para consistência com o frontend)
         if isinstance(tarefa_db.get("data_criacao"), datetime):
             tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
         else:
-            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", "")) # Garante que é string
+            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
 
-        # Formatação de comentários
         comentarios_db = tarefa_db.get("comentarios", [])
         for comentario_original in comentarios_db:
             comentario_formatado = {
                 "autor": comentario_original.get("autor"),
                 "comentario": comentario_original.get("comentario"),
-                "data": "" # Inicializa
+                "data": None # <--- MUDANÇA AQUI: Inicializa a data como None
             }
-            if isinstance(comentario_original.get("data"), datetime):
-                comentario_formatado["data"] = comentario_original.get("data").isoformat()
+            
+            # MUDANÇA CRÍTICA AQUI: Lógica para garantir que data é datetime ou None
+            original_data = comentario_original.get("data")
+            if original_data and str(original_data).strip() != '': # Se existe e não é string vazia
+                if isinstance(original_data, datetime):
+                    comentario_formatado["data"] = original_data.isoformat()
+                else:
+                    try:
+                        # Tenta converter string para datetime, depois para ISO string
+                        dt_obj = datetime.fromisoformat(str(original_data).replace('Z', '+00:00'))
+                        comentario_formatado["data"] = dt_obj.isoformat()
+                    except ValueError:
+                        comentario_formatado["data"] = None # Se falhar, define como None
             else:
-                comentario_formatado["data"] = str(comentario_original.get("data", ""))
-            tarefa_formatada["comentarios"].append(comentario_formatado)
+                comentario_formatado["data"] = None # Se a data original é None ou string vazia, define como None
+            # FIM DA MUDANÇA CRÍTICA --->
 
+            tarefa_formatada["comentarios"].append(comentario_formatado)
         tarefas_formatadas.append(tarefa_formatada)
     return tarefas_formatadas
 
