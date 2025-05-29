@@ -1,49 +1,72 @@
 // src/components/Dashboard.tsx
-import React from 'react';
-import type{ User } from '../types/interfaces'; // Importe a interface User
-import "./Dashboard.css"
-// Definindo as props para o componente Dashboard
+import React, { useState, useEffect } from 'react'; // Adicione useState e useEffect
+import axios from 'axios'; // Para fazer chamadas à API
+import type{ User } from '../types/interfaces';
+
 interface DashboardProps {
-  currentUser: User | null; // Recebe o usuário atual para exibir o nome
+  currentUser: User | null;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
-  // --- Dados Estáticos (Hardcoded) ---
-  // Estes dados serão substituídos por dados dinâmicos do Redis mais tarde.
-  // Por enquanto, eles servem apenas para simular a apresentação.
+  // --- Estados para os Dados Dinâmicos ---
+  const [tasksByStatus, setTasksByStatus] = useState<{ pendente: number; 'em andamento': number; concluída: number }>({ pendente: 0, 'em andamento': 0, concluída: 0 });
+  const [tasksCreatedToday, setTasksCreatedToday] = useState<number>(0);
 
-  // 1. Contadores de Status de Tarefas (Para o usuário logado)
-  const staticTasksByStatus = {
-    pendente: 5,
-    'em andamento': 3,
-    concluída: 12,
+  const [completedTasksByDay, setCompletedTasksByDay] = useState<{ date: string; count: number }[]>([]); // NOVO ESTADO
+  const [topTags, setTopTags] = useState<{ tag: string; count: number }[]>([]); // NOVO ESTADO para tags
+  
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const API_URL = 'http://localhost:8000/metrics'; // Base URL para suas métricas
+
+  const fetchMetrics = async () => {
+    if (!currentUser || !currentUser.id) { // Certifique-se que o user_id existe
+      setLoading(false);
+      setError("Por favor, faça login para visualizar o Dashboard.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      // Métrica 1: Contadores de Status
+      const statusResponse = await axios.get(`${API_URL}/status`, {
+        params: { user_id: currentUser.id }
+      });
+      setTasksByStatus(statusResponse.data);
+
+      // Métrica 4: Tarefas Criadas Hoje
+      const createdTodayResponse = await axios.get(`${API_URL}/tasks-created-today`, {
+        params: { user_id: currentUser.id }
+      });
+      setTasksCreatedToday(createdTodayResponse.data.count);
+
+      // --- NOVO: Métrica 3: Tags Mais Utilizadas ---
+      const topTagsResponse = await axios.get(`${API_URL}/top-tags`, { params: { user_id: currentUser.id, count: 5 } });
+      setTopTags(topTagsResponse.data);
+      // --- FIM NOVO ---
+
+      // (Aqui você adicionaria chamadas para as outras métricas quando implementadas)
+
+    } catch (err: any) {
+      if (axios.isAxiosError(err) && err.response) {
+        setError(`Erro ao carregar métricas: ${err.response.data.detail || err.message}`);
+      } else {
+        setError(`Erro desconhecido ao carregar métricas: ${err.message}`);
+      }
+      console.error('Erro ao carregar métricas:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // 2. Totalizadores por Período (Tarefas concluídas por dia)
-  const staticCompletedTasksByDay = [
-    { date: '2025-05-25', count: 2 },
-    { date: '2025-05-26', count: 4 },
-    { date: '2025-05-27', count: 7 }, // Hoje
-    { date: '2025-05-28', count: 3 }, // Dia atual (se já tiver dados)
-  ];
-
-  // 3. Tags Mais Utilizadas (No geral)
-  const staticTopTags = [
-    { tag: 'Urgente', count: 15 },
-    { tag: 'Estudo', count: 12 },
-    { tag: 'Trabalho', count: 10 },
-    { tag: 'Pessoal', count: 8 },
-    { tag: 'Compras', count: 5 },
-  ];
-
-  // 4. Estatísticas de Produtividade
-  const staticProductivityStats = {
-    avgCompletionTime: '2h 30min', // Ex: Formato de string
-    tasksCreatedToday: 4,
-    weeklyCompletionRate: '85%', // Ex: Formato de string
-  };
-
-  // --- Renderização do Componente ---
+  useEffect(() => {
+    fetchMetrics();
+    // Opcional: Atualizar métricas a cada X segundos para dar a sensação de tempo real
+    const interval = setInterval(fetchMetrics, 5000); // Atualiza a cada 5 segundos
+    return () => clearInterval(interval); // Limpa o intervalo ao desmontar
+  }, [currentUser]); // Refaz a busca se o usuário logado mudar
 
   if (!currentUser) {
     return (
@@ -54,53 +77,75 @@ const Dashboard: React.FC<DashboardProps> = ({ currentUser }) => {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="dashboard-container">
+        <h2>Dashboard de Produtividade de {currentUser.username}</h2>
+        <div className="alert alert-info">Carregando métricas...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="dashboard-container">
+        <h2>Dashboard de Produtividade de {currentUser.username}</h2>
+        <div className="alert alert-danger">{error}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-container">
       <h2>Dashboard de Produtividade de {currentUser.username}</h2>
 
-      <p className="lead">Bem-vindo(a) ao seu Dashboard! Aqui você verá suas métricas de produtividade.</p>
-      <p className="text-muted">Os dados abaixo são **estáticos** por enquanto e serão atualizados futuramente.</p>
+      <p className="lead">Bem-vindo(a) ao seu Dashboard!</p>
+      <p className="text-muted">Os dados abaixo são atualizados dinamicamente pelo Redis.</p>
 
       <div className="metrics-grid">
-        {/* Métrica 1: Contadores de Status de Tarefas */}
+        {/* Métrica 1: Contadores de Status de Tarefas (Dinâmico) */}
         <div className="metric-card">
           <h3>Tarefas por Status</h3>
           <ul>
-            <li><strong>Pendente:</strong> {staticTasksByStatus.pendente}</li>
-            <li><strong>Em Andamento:</strong> {staticTasksByStatus['em andamento']}</li>
-            <li><strong>Concluída:</strong> {staticTasksByStatus.concluída}</li>
+            <li>Pendente: {tasksByStatus.pendente}</li>
+            <li>Em Andamento: {tasksByStatus['em andamento']}</li>
+            <li>Concluída: {tasksByStatus.concluída}</li>
           </ul>
         </div>
 
-        {/* Métrica 2: Totalizadores por Período (Tarefas Concluídas por Dia) */}
+        {/* Métrica 4: Tarefas Criadas Hoje (Dinâmico) */}
+        <div className="metric-card">
+          <h3>Tarefas Criadas Hoje</h3>
+          <p className="metric-value">{tasksCreatedToday}</p>
+        </div>
+
+         <div className="metric-card">
+          <h3>Tags Mais Utilizadas</h3>
+          {topTags.length > 0 ? (
+            <ul>
+              {topTags.map((item, index) => (
+                <li key={index}>{item.tag}: {item.count} usos</li>
+              ))}
+            </ul>
+          ) : (
+            <p>Nenhuma tag utilizada ainda.</p>
+          )}
+        </div>
+
+         {/* Métrica 2: Concluídas por Dia (Dinâmico) */}
         <div className="metric-card">
           <h3>Concluídas por Dia</h3>
-          <ul>
-            {staticCompletedTasksByDay.map((item, index) => (
-              <li key={index}><strong>{item.date}:</strong> {item.count} tarefas</li>
-            ))}
-          </ul>
+          {completedTasksByDay.length > 0 ? (
+            <ul>
+              {completedTasksByDay.map((item, index) => (
+                <li key={index}>**{item.date}**: {item.count} tarefas</li>
+              ))}
+            </ul>
+          ) : (
+            <p>Nenhuma tarefa concluída nos últimos 7 dias.</p>
+          )}
         </div>
 
-        {/* Métrica 3: Tags Mais Utilizadas */}
-        <div className="metric-card">
-          <h3>Tags Mais Utilizadas</h3>
-          <ul>
-            {staticTopTags.map((item, index) => (
-              <li key={index}><strong>{item.tag}</strong>: {item.count} usos</li>
-            ))}
-          </ul>
-        </div>
-
-        {/* Métrica 4: Estatísticas de Produtividade */}
-        <div className="metric-card">
-          <h3>Estatísticas de Produtividade</h3>
-          <ul>
-            <li><strong>Tarefas Criadas Hoje</strong>: {staticProductivityStats.tasksCreatedToday}</li>
-            <li><strong>Tempo Médio Conclusão</strong>: {staticProductivityStats.avgCompletionTime}</li>
-            <li><strong>Taxa Conclusão Semanal</strong>: {staticProductivityStats.weeklyCompletionRate}</li>
-          </ul>
-        </div>
       </div>
     </div>
   );

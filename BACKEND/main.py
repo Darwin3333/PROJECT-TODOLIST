@@ -3,9 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 # Removendo BeforeValidator, PlainSerializer, Annotated, PyObjectId, pois não são mais necessários
 from pydantic import BaseModel, Field, ConfigDict, field_validator # Adicionado field_validator
 from typing import List, Optional 
-from datetime import datetime
-import traceback 
+from datetime import datetime, timedelta
+import traceback
+from func import _recalculate_redis_metrics
 
+from conexao import colecao_tarefas, redis_client
+import redis
 # Importa as funções do seu func.py modificado
 from func import (
     criar_tarefa,
@@ -30,6 +33,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        # Tenta executar um comando simples no Redis para verificar a conexão
+        redis_client.ping()
+        print("Conexão com Redis estabelecida com sucesso!")
+    except redis.exceptions.ConnectionError as e:
+        print(f"ERRO: Não foi possível conectar ao Redis. Verifique se o servidor Redis está rodando. Erro: {e}")
+        # É uma boa prática levantar uma exceção aqui para que a aplicação não inicie
+        # se o banco de dados principal (Redis, neste caso, para métricas) não estiver acessível.
+        raise Exception("Falha ao conectar ao Redis. Verifique o servidor e as configurações.")
+        
 # --- Modelos Pydantic ---
 
 # REMOVEMOS A CLASSE PyObjectId INTEIRA.
@@ -271,3 +286,80 @@ async def buscar_tarefas_por_criterio_rota(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erro ao buscar tarefas: {str(e)}")
+
+# --- NOVO: Rotas de Métricas Redis ---
+
+@app.get("/metrics/status", response_model=dict)
+async def get_tasks_by_status(user_id: str):
+    """
+    Retorna o número de tarefas por status para um usuário específico.
+    """
+    statuses = ["pendente", "em andamento", "concluída"]
+    metrics = {}
+    for status in statuses:
+        key = f"user:{user_id}:tasks:status:{status}"
+        count = redis_client.get(key)
+        metrics[status] = int(count) if count else 0 # Retorna 0 se a chave não existir
+    return metrics
+
+@app.get("/metrics/tasks-created-today", response_model=dict)
+async def get_tasks_created_today(user_id: str):
+    """
+    Retorna o número de tarefas criadas hoje para um usuário específico.
+    """
+    today_key = datetime.now().strftime("%Y-%m-%d")
+    key = f"user:{user_id}:tasks:created_today:{today_key}"
+    count = redis_client.get(key)
+    return {"count": int(count) if count else 0}
+
+# --- FIM NOVO ---
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        redis_client.ping()
+        print("Conexão com Redis estabelecida com sucesso!")
+        # NOVO: Chame a função de recalculo aqui, APÓS a conexão Redis
+        _recalculate_redis_metrics()
+    except redis.exceptions.ConnectionError as e:
+        print(f"ERRO: Não foi possível conectar ao Redis. Verifique se o servidor Redis está rodando. Erro: {e}")
+        raise Exception("Falha ao conectar ao Redis. Verifique o servidor e as configurações.")
+    
+
+@app.get("/metrics/top-tags", response_model=List[dict])
+async def get_top_tags(user_id: str, count: int = Query(5, gt=0, le=20)):
+    """
+    Retorna as N tags mais utilizadas por um usuário.
+    """
+    # ZREVRANGE: Retorna membros de um Sorted Set em ordem decrescente de score.
+    # WITHSCORES: Inclui o score (contagem) junto com o membro (tag).
+    # O resultado é uma lista de tuplas (tag, score_bytes).
+    top_tags_raw = redis_client.zrevrange(f"user:{user_id}:tags:top", 0, count - 1, withscores=True)
+    
+    top_tags_formatted = []
+    for tag_name, score in top_tags_raw:
+        # Decodifica o nome da tag (se decode_responses=True não estiver no redis_client)
+        # e garante que o score é um inteiro.
+        top_tags_formatted.append({
+            "tag": tag_name, # Se decode_responses=True, já é string
+            "count": int(score)
+        })
+    return top_tags_formatted
+
+@app.get("/metrics/completed-by-day", response_model=List[dict])
+async def get_completed_tasks_by_day(user_id: str, days: int = Query(7, gt=0, le=90)):
+    """
+    Retorna o número de tarefas concluídas por dia para um usuário nos últimos N dias.
+    """
+    completed_by_day = []
+    for i in range(days):
+        current_date = datetime.now() - timedelta(days=i)
+        date_key = current_date.strftime("%Y-%m-%d")
+        key = f"user:{user_id}:tasks:completed:{date_key}"
+        count = redis_client.get(key)
+        completed_by_day.append({
+            "date": date_key,
+            "count": int(count) if count else 0
+        })
+    # Retorna os dias em ordem crescente (mais antigo para mais recente)
+    return list(reversed(completed_by_day))
