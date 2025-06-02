@@ -1,411 +1,300 @@
-from pymongo import MongoClient
-from conexao import colecao_tarefas, redis_client # Certifique-se que 'conexao.py' está correto
-from datetime import datetime
-from bson import ObjectId, errors # Importar ObjectId para trabalhar com _id do MongoDB
+from conexao import colecao_tarefas, colecao_usuarios, redis_client
+from datetime import datetime, timezone
+import uuid
 
-# NOTA: As funções agora recebem argumentos e retornam dados, não mais usam input()/print() diretamente.
 
-def criar_tarefa(tarefa_data: dict):
-    if "data_criacao" not in tarefa_data:
-        tarefa_data["data_criacao"] = datetime.now()
-    if "tags" not in tarefa_data or not isinstance(tarefa_data["tags"], list):
-        tarefa_data["tags"] = []
-    if "comentarios" not in tarefa_data or not isinstance(tarefa_data["comentarios"], list):
-        tarefa_data["comentarios"] = []
-        
-    result = colecao_tarefas.insert_one(tarefa_data)
+# --- Funções de Usuário ---
+def criar_usuario_func(username: str, password_plaintext: str) -> str:
+    if colecao_usuarios.find_one({"username": username}):
+        raise ValueError(f"Usuário com username '{username}' já existe.")
+    user_uuid = str(uuid.uuid4())
+    novo_usuario_doc = {
+        "id_user": user_uuid, 
+        "username": username,
+        "password": password_plaintext, 
+        "data_criacao": datetime.now(timezone.utc)
+    }
+    colecao_usuarios.insert_one(novo_usuario_doc)
+    return user_uuid
 
-    user_id = str(tarefa_data.get("user_id", "anonimo")) # Garante que user_id é string, fallback para 'anonimo'
-    # --- NOVO: Lógica de Métricas Redis para CRIAÇÃO ---
-    
-    # Métrica 1: Contadores de Status de Tarefas (Pendente)
-    initial_status = tarefa_data.get("status", "pendente") # Pega o status da tarefa criada
-    redis_client.incr(f"user:{user_id}:tasks:status:{initial_status}")
+def buscar_usuario_por_id_func(id_user_param: str) -> dict | None:
+    return colecao_usuarios.find_one({"id_user": id_user_param}, {"password": 0, "_id": 0})
 
-    # Métrica 4: Tarefas criadas hoje
-    today_key = datetime.now().strftime("%Y-%m-%d")
-    redis_client.incr(f"user:{user_id}:tasks:created_today:{today_key}")
-    # Opcional: Defina um TTL para a chave diária (ex: 24h + margem, para expirar no dia seguinte)
-    redis_client.expire(f"user:{user_id}:tasks:created_today:{today_key}", 86400 * 2) # Expira em 2 dias
-    # --- FIM NOVO ---
+def buscar_usuario_por_username_func(username: str) -> dict | None:
+    return colecao_usuarios.find_one({"username": username}, {"password": 0, "_id": 0})
 
-     # --- NOVO: Métrica 3: Tags Mais Utilizadas (na CRIAÇÃO) ---
-    tags_da_tarefa = tarefa_data.get("tags", [])
-    for tag in tags_da_tarefa:
-        # ZINCRBY: Incrementa o score de um membro em um Sorted Set.
-        # A chave 'user:<user_id>:tags:top' armazena o ranking de tags para o usuário.
-        redis_client.zincrby(f"user:{user_id}:tags:top", 1, tag)
-    # --- FIM NOVO ---
+# --- Função Auxiliar de Formatação ---
 
-    return result.inserted_id
+def _formatar_tarefa_para_frontend(tarefa_db: dict) -> dict | None:
+    if not tarefa_db:
+        return None
 
-def listar_tarefas():
-    """
-    Lista todas as tarefas no banco de dados, transformando _id para id e formatando datas.
-    """
-    tarefas_formatadas = []
-    for tarefa_db in colecao_tarefas.find():
-        tarefa_formatada = {
-            "id": str(tarefa_db["_id"]),
-            "titulo": tarefa_db.get("titulo"),
-            "descricao": tarefa_db.get("descricao"),
-            "status": tarefa_db.get("status"),
-            "user_id": tarefa_db.get("user_id"),
-            "tags": tarefa_db.get("tags", []),
-            "comentarios": []
-        }
-
-        if isinstance(tarefa_db.get("data_criacao"), datetime):
-            tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
-        else:
-            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
-
-        comentarios_db = tarefa_db.get("comentarios", [])
-        for comentario_original in comentarios_db:
-            comentario_formatado = {
-                "autor": comentario_original.get("autor"),
-                "comentario": comentario_original.get("comentario"),
-                "data": None # <--- MUDANÇA AQUI: Inicializa a data como None
+    comentarios_formatados = []
+    if "comentarios" in tarefa_db and isinstance(tarefa_db.get("comentarios"), list):
+        for comentario_db in tarefa_db.get("comentarios", []):
+            com_fmt = {
+                "id_comentario": comentario_db.get("id_comentario"),
+                "id_autor": comentario_db.get("id_autor"),
+                "comentario": comentario_db.get("comentario"),
+                "data": None # Default
             }
-            
-            # MUDANÇA CRÍTICA AQUI: Lógica para garantir que data é datetime ou None
-            original_data = comentario_original.get("data")
-            if original_data and str(original_data).strip() != '': # Se existe e não é string vazia
-                if isinstance(original_data, datetime):
-                    comentario_formatado["data"] = original_data.isoformat()
-                else:
-                    try:
-                        # Tenta converter string para datetime, depois para ISO string
-                        dt_obj = datetime.fromisoformat(str(original_data).replace('Z', '+00:00'))
-                        comentario_formatado["data"] = dt_obj.isoformat()
-                    except ValueError:
-                        comentario_formatado["data"] = None # Se falhar, define como None
-            else:
-                comentario_formatado["data"] = None # Se a data original é None ou string vazia, define como None
-            # FIM DA MUDANÇA CRÍTICA --->
+            data_com_db = comentario_db.get("data") # Espera-se que seja datetime ou None
+            if data_com_db: # Se existir (não for None), e confiamos que é datetime
+                com_fmt["data"] = data_com_db.isoformat().replace("+00:00", "Z")
+            comentarios_formatados.append(com_fmt)
 
-            tarefa_formatada["comentarios"].append(comentario_formatado)
-        tarefas_formatadas.append(tarefa_formatada)
+    return {
+        "id": tarefa_db.get("id"), 
+        "titulo": tarefa_db.get("titulo"),
+        "descricao": tarefa_db.get("descricao"),
+        "status": tarefa_db.get("status"),
+        "user_id": tarefa_db.get("user_id"), 
+        "tags": tarefa_db.get("tags", []),
+        "comentarios": comentarios_formatados,
+        "data_criacao": tarefa_db.get("data_criacao").isoformat().replace("+00:00", "Z") if isinstance(tarefa_db.get("data_criacao"), datetime) else str(tarefa_db.get("data_criacao", "")),
+        "data_atualizacao": tarefa_db.get("data_atualizacao").isoformat().replace("+00:00", "Z") if isinstance(tarefa_db.get("data_atualizacao"), datetime) else str(tarefa_db.get("data_atualizacao", ""))
+    }
+
+# --- Funções CRUD de Tarefas ---
+
+def criar_tarefa(tarefa_data: dict) -> str:
+    now_utc = datetime.now(timezone.utc)
+    task_uuid = str(uuid.uuid4())
+
+    user_id_criador = tarefa_data.get("user_id")
+    if not user_id_criador or not buscar_usuario_por_id_func(user_id_criador):
+        raise ValueError(f"ID de usuário criador ('{user_id_criador}') inválido ou não fornecido.")
+
+    comentarios_processados = []
+    for comentario_in in tarefa_data.get("comentarios", []): # Comentários podem ou não existir
+        id_autor_comentario = comentario_in.get("id_autor")
+        if not id_autor_comentario or not buscar_usuario_por_id_func(id_autor_comentario):
+            raise ValueError(f"ID de autor ('{id_autor_comentario}') inválido em um dos comentários.")
+        
+        comentarios_processados.append({
+            "id_comentario": str(uuid.uuid4()),
+            "id_autor": id_autor_comentario,
+            "comentario": comentario_in.get("comentario", ""),
+            "data": now_utc # Data do comentário definida pelo backend como now_utc
+        })
+        
+    nova_tarefa_doc = {
+        "id": task_uuid,   
+        "titulo": tarefa_data.get("titulo"),
+        "descricao": tarefa_data.get("descricao"),
+        "status": tarefa_data.get("status", "pendente"),
+        "user_id": user_id_criador,
+        "tags": tarefa_data.get("tags", []),
+        "comentarios": comentarios_processados,
+        "data_criacao": now_utc, 
+        "data_atualizacao": now_utc 
+    }
+    
+    colecao_tarefas.insert_one(nova_tarefa_doc)
+    
+    redis_user_segment = user_id_criador 
+    initial_status = nova_tarefa_doc.get("status", "pendente")
+    redis_client.incr(f"user:{redis_user_segment}:tasks:status:{initial_status}")
+    today_key = now_utc.strftime("%Y-%m-%d")
+    redis_client.incr(f"user:{redis_user_segment}:tasks:created_today:{today_key}")
+    for tag in nova_tarefa_doc.get("tags", []):
+        redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
+
+    return task_uuid
+
+def listar_tarefas() -> list[dict]:
+    tarefas_formatadas = []
+    for tarefa_db in colecao_tarefas.find().sort("data_criacao", -1): 
+        fmt = _formatar_tarefa_para_frontend(tarefa_db)
+        if fmt: tarefas_formatadas.append(fmt)
     return tarefas_formatadas
 
-def buscar_tarefa_por_id(tarefa_id: str):
-    """
-    Busca uma tarefa específica pelo seu ID, transformando _id para id e formatando datas.
-    Retorna a tarefa encontrada ou None se não existir.
-    """
-    try:
-        obj_id = ObjectId(tarefa_id)
-        tarefa_db = colecao_tarefas.find_one({"_id": obj_id})
-        if tarefa_db:
-            # <--- SUBSTITUA TODO O CONTEÚDO DO IF tarefa_db: POR ISSO:
-            tarefa_formatada = {
-                "id": str(tarefa_db["_id"]), # Transforma _id para id e string
-                "titulo": tarefa_db.get("titulo"),
-                "descricao": tarefa_db.get("descricao"),
-                "status": tarefa_db.get("status"),
-                "user_id": tarefa_db.get("user_id"), # Incluir user_id ao buscar por ID
-                "tags": tarefa_db.get("tags", []),
-                "comentarios": [] # Inicializa
-            }
+def buscar_tarefa_por_id_func(task_uuid_param: str) -> dict | None:
+    tarefa_db = colecao_tarefas.find_one({"id": task_uuid_param}) 
+    return _formatar_tarefa_para_frontend(tarefa_db)
 
-            # Formatação de data_criacao
-            if isinstance(tarefa_db.get("data_criacao"), datetime):
-                tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
-            else:
-                tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
 
-            # Formatação de comentários
-            comentarios_db = tarefa_db.get("comentarios", [])
-            for comentario_original in comentarios_db:
-                comentario_formatado = {
-                    "autor": comentario_original.get("autor"),
-                    "comentario": comentario_original.get("comentario"),
-                    "data": ""
-                }
-                if isinstance(comentario_original.get("data"), datetime):
-                    comentario_formatado["data"] = comentario_original.get("data").isoformat()
-                else:
-                    comentario_formatado["data"] = str(comentario_original.get("data", ""))
-                tarefa_formatada["comentarios"].append(comentario_formatado)
+def atualizar_tarefa(task_uuid_param: str, dados_atualizacao: dict, solicitante_id_user: str):
+    tarefa_antiga = colecao_tarefas.find_one({"id": task_uuid_param}) 
+    if not tarefa_antiga:
+        print(f"Erro: Tarefa com ID UUID '{task_uuid_param}' não encontrada para atualização.")
+        return None 
+    
+    # VERIFICAÇÃO DE PERMISSÃO
+    if tarefa_antiga.get("user_id") != solicitante_id_user:
+        raise PermissionError(f"Usuário '{solicitante_id_user}' não autorizado a editar a tarefa '{task_uuid_param}'.")
 
-            return tarefa_formatada
+    campos_protegidos = ['id', '_id', 'data_criacao', 'user_id'] 
+    payload_set = {key: value for key, value in dados_atualizacao.items() if key not in campos_protegidos}
+    
+    now_utc = datetime.now(timezone.utc)
+    payload_set["data_atualizacao"] = now_utc
+
+    # Para atualizar_tarefa, a lógica de data dos comentários precisa ser mais robusta,
+    # pois o frontend pode enviar comentários existentes (com suas datas originais como string)
+    # e novos comentários (para os quais o backend gerará a data).
+    if "comentarios" in payload_set and isinstance(payload_set["comentarios"], list):
+        comentarios_processados_update = []
+        ids_comentarios_existentes_na_tarefa_db = {c.get("id_comentario") for c in tarefa_antiga.get("comentarios", []) if c.get("id_comentario")}
+
+        for comentario_in in payload_set["comentarios"]:
+            id_autor_comentario = comentario_in.get("id_autor")
+            if not id_autor_comentario or not buscar_usuario_por_id_func(id_autor_comentario):
+                raise ValueError(f"ID de autor ('{id_autor_comentario}') inválido em um comentário para atualização.")
+
+            id_com_payload = comentario_in.get("id_comentario") # ID do comentário vindo do payload
+            
+            id_com_final = id_com_payload if id_com_payload and id_com_payload in ids_comentarios_existentes_na_tarefa_db else str(uuid.uuid4())
+
+            data_comentario_dt = now_utc # Default para novos comentários ou se a data enviada for inválida
+            data_comentario_str_payload = comentario_in.get("data")
+
+            if id_com_final == id_com_payload: # Se é um comentário existente
+                if data_comentario_str_payload and isinstance(data_comentario_str_payload, str):
+                    try: # Tenta usar a data enviada pelo frontend (que deve ser a original do comentário)
+                        data_comentario_dt = datetime.fromisoformat(data_comentario_str_payload.replace("Z", "+00:00"))
+                    except ValueError:
+                        print(f"Aviso: Data de comentário existente ('{data_comentario_str_payload}') é inválida, usando data da atualização da tarefa.")
+                        # Aqui, para um comentário existente cuja data veio inválida, poderíamos buscar a data original do BD
+                        # ou simplesmente usar now_utc. Para simplificar a apresentação, usamos now_utc.
+                # Se data_comentario_str_payload não veio para um comentário existente, pode ser um erro do frontend
+                # ou uma decisão de design. Para simplificar, usaremos now_utc.
+            
+            comentarios_processados_update.append({
+                "id_comentario": id_com_final,
+                "id_autor": id_autor_comentario,
+                "comentario": comentario_in.get("comentario", ""),
+                "data": data_comentario_dt 
+            })
+        payload_set["comentarios"] = comentarios_processados_update
+    
+    if not payload_set: 
+        if tarefa_antiga: 
+             return colecao_tarefas.update_one({"id": task_uuid_param}, {"$set": {"data_atualizacao": now_utc}})
         return None
-    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO except
-        print(f"Erro: ID inválido '{tarefa_id}'")
+
+    result = colecao_tarefas.update_one({"id": task_uuid_param}, {"$set": payload_set})
+    
+    # Lógica Redis para métricas (mantida como antes, usando UUIDs para user_id)
+    if result and result.matched_count > 0:
+        redis_user_segment = str(tarefa_antiga.get("user_id", "anonimo"))
+        old_status = tarefa_antiga.get("status", "pendente")
+        new_status = payload_set.get("status", old_status)
+        if old_status != new_status:
+            redis_client.decr(f"user:{redis_user_segment}:tasks:status:{old_status}")
+            redis_client.incr(f"user:{redis_user_segment}:tasks:status:{new_status}")
+            if new_status == 'concluída':
+                today_key_str = now_utc.strftime("%Y-%m-%d")
+                redis_client.incr(f"user:{redis_user_segment}:tasks:completed:{today_key_str}")
+                redis_client.expire(f"user:{redis_user_segment}:tasks:completed:{today_key_str}", 86400 * 60)
+        old_tags = set(tarefa_antiga.get("tags", []))
+        new_tags = set(payload_set.get("tags", old_tags if "tags" in payload_set else []))
+        tags_removed = old_tags - new_tags
+        tags_added = new_tags - old_tags
+        for tag in tags_removed: redis_client.zincrby(f"user:{redis_user_segment}:tags:top", -1, tag)
+        for tag in tags_added: redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
+    return result
+
+def adicionar_tag_a_tarefa(task_uuid_param: str, tag_nova: str, solicitante_id_user: str):
+    tarefa = colecao_tarefas.find_one({"id": task_uuid_param})
+    if not tarefa:
+        return None # Ou levantar erro de tarefa não encontrada
+    if tarefa.get("user_id") != solicitante_id_user:
+        raise PermissionError(f"Usuário '{solicitante_id_user}' não autorizado a modificar tags desta tarefa.")
+
+    now_utc = datetime.now(timezone.utc)
+    return colecao_tarefas.update_one(
+        {"id": task_uuid_param}, 
+        {"$addToSet": {"tags": tag_nova}, "$set": {"data_atualizacao": now_utc}}
+    )
+
+def atualizar_tag_tarefa(task_uuid_param: str, tag_antiga: str, tag_nova: str, str, solicitante_id_user: str):
+    tarefa = colecao_tarefas.find_one({"id": task_uuid_param})
+    if not tarefa:
         return None
-    except Exception as e:
-        print(f"Erro ao buscar tarefa por ID no func.py: {e}")
-        raise # Re-lança a exceção para ser tratada pela rota
+    if tarefa.get("user_id") != solicitante_id_user:
+        raise PermissionError(f"Usuário '{solicitante_id_user}' não autorizado a modificar tags desta tarefa.")
 
-
-def atualizar_tarefa(tarefa_id: str, dados_atualizacao: dict):
-    """
-    Atualiza uma tarefa existente no banco de dados.
-    Recebe o ID da tarefa e um dicionário com os campos a serem atualizados.
-    Retorna o resultado da operação de atualização do MongoDB.
-    """
-    try:
-        tarefa_antiga = colecao_tarefas.find_one({"_id": ObjectId(tarefa_id)})
-        # Certifica-se de que nenhum campo como _id é enviado para atualização
-        dados_atualizacao.pop('_id', None)
-        # Se você tiver a data_criacao e não quiser que ela seja atualizada, remova-a também
-        dados_atualizacao.pop('data_criacao', None)
-
-        if "comentarios" in dados_atualizacao and isinstance(dados_atualizacao["comentarios"], list):
-            processed_comentarios_update = []
-            for comment_dict in dados_atualizacao["comentarios"]:
-                if "data" not in comment_dict or comment_dict["data"] is None or (isinstance(comment_dict["data"], str) and comment_dict["data"].strip() == ''):
-                    comment_dict["data"] = datetime.now()
-                processed_comentarios_update.append(comment_dict)
-            dados_atualizacao["comentarios"] = processed_comentarios_update
-
+    now_utc = datetime.now(timezone.utc)
+    result = colecao_tarefas.update_one(
+        {"id": task_uuid_param, "tags": tag_antiga}, 
+        {"$pull": {"tags": tag_antiga}, "$addToSet": {"tags": tag_nova}, "$set": {"data_atualizacao": now_utc}}
+    )
+    if result.modified_count == 0 and tag_antiga != tag_nova: 
         result = colecao_tarefas.update_one(
-            {"_id": ObjectId(tarefa_id)},
-            {"$set": dados_atualizacao}
+             {"id": task_uuid_param},
+             {"$addToSet": {"tags": tag_nova}, "$set": {"data_atualizacao": now_utc}}
         )
-        # --- NOVO: Lógica de Métricas Redis para ATUALIZAÇÃO ---
-        if result and result.modified_count == 1 and tarefa_antiga:
-            user_id = str(tarefa_antiga.get("user_id", "anonimo"))
-            old_status = tarefa_antiga.get("status", "pendente") # Pega o status antigo
-            new_status = dados_atualizacao.get("status", old_status) # Pega o novo status
+    return result
 
-            if old_status != new_status:
-                # Decrementa o contador do status antigo
-                redis_client.decr(f"user:{user_id}:tasks:status:{old_status}")
-                # Incrementa o contador do novo status
-                redis_client.incr(f"user:{user_id}:tasks:status:{new_status}")
-                print(f"DEBUG REDIS: Tarefa {tarefa_id} status alterado de '{old_status}' para '{new_status}' para user:{user_id}")
-
-                # --- NOVO: Métrica 2: Totalizadores por Período (Concluídas por Dia) ---
-                if new_status == 'concluída':
-                    today_key = datetime.now().strftime("%Y-%m-%d")
-                    redis_client.incr(f"user:{user_id}:tasks:completed:{today_key}")
-                    # Opcional: TTL para limpeza automática de chaves diárias após, digamos, 60 dias
-                    redis_client.expire(f"user:{user_id}:tasks:completed:{today_key}", 86400 * 60)
-                    print(f"DEBUG REDIS: Tarefa {tarefa_id} concluída, contador diário incrementado para user:{user_id} em {today_key}")
-                # --- FIM NOVO ---
-
-            else:
-                print(f"DEBUG REDIS: Tarefa {tarefa_id} atualizada, mas status '{old_status}' não mudou para user:{user_id}. Contadores Redis não alterados.")
-        else:
-            print(f"DEBUG REDIS: Tarefa {tarefa_id} não foi modificada no MongoDB. Métricas Redis não alteradas.")
-        # --- FIM NOVO ---
-
-            # --- NOVO: Métrica 3: Tags Mais Utilizadas (na ATUALIZAÇÃO) ---
-            old_tags = tarefa_antiga.get("tags", [])
-            new_tags = dados_atualizacao.get("tags", [])
-
-            # Tags que foram REMOVIDAS
-            for tag in old_tags:
-                if tag not in new_tags:
-                    redis_client.zincrby(f"user:{user_id}:tags:top", -1, tag) # Decrementa o score
-                    print(f"DEBUG REDIS: Tag '{tag}' decrementada para user:{user_id}")
-
-            # Tags que foram ADICIONADAS
-            for tag in new_tags:
-                if tag not in old_tags:
-                    redis_client.zincrby(f"user:{user_id}:tags:top", 1, tag) # Incrementa o score
-                    print(f"DEBUG REDIS: Tag '{tag}' incrementada para user:{user_id}")
-            # --- FIM NOVO ---
-
-        return result
-    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
-        print(f"Erro: ID inválido para adicionar tag '{tarefa_id}'")
-        return None
-    except Exception as e:
-        print(f"Erro ao atualizar tarefa no func.py: {e}")
-        return None # Ou levantar uma exceção mais específica
-
-def adicionar_tag_a_tarefa(tarefa_id: str, tag_nova: str):
-    """
-    Adiciona uma nova tag a uma tarefa.
-    Retorna o resultado da operação de atualização.
-    """
-    try:
-        result = colecao_tarefas.update_one(
-            {"_id": ObjectId(tarefa_id)},
-            {"$addToSet": {"tags": tag_nova}} # $addToSet garante que a tag é única
-        )
-        return result
-    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
-        print(f"Erro: ID inválido para adicionar tag '{tarefa_id}'")
-        return None
-    except Exception:
-        return None
-
-def atualizar_tag_tarefa(tarefa_id: str, tag_antiga: str, tag_nova: str):
-    """
-    Atualiza uma tag existente por uma nova em uma tarefa.
-    Retorna o resultado da operação de atualização.
-    """
-    try:
-        # Remove a tag antiga e adiciona a nova
-        result = colecao_tarefas.update_one(
-            {"_id": ObjectId(tarefa_id)},
-            {"$pull": {"tags": tag_antiga}, "$addToSet": {"tags": tag_nova}}
-        )
-        return result
-    except errors.InvalidId: # <--- ADICIONE ESTE BLOCO
-        print(f"ERRO: FUNC - ID inválido para deletar: '{tarefa_id}'")
-        return None
-    except Exception:
-        return None
-
-
-def deletar_tarefa(tarefa_id: str):
-    """
-    Deleta uma tarefa do banco de dados.
-    Recebe o ID da tarefa.
-    Retorna o resultado da operação de deleção do MongoDB.
-    """
-    print(f"DEBUG: FUNC - deletar_tarefa chamada com ID: {tarefa_id}")
-    try:
-        # Primeiro, obtenha a tarefa ANTES da deleção para saber o status e user_id
-        tarefa_a_deletar = colecao_tarefas.find_one({"_id": ObjectId(tarefa_id)})
-
-        object_id = ObjectId(tarefa_id)
-        print(f"DEBUG: FUNC - Converteu para ObjectId: {object_id}")
-        result = colecao_tarefas.delete_one({"_id": object_id})
-
-        # --- NOVO: Lógica de Métricas Redis para DELEÇÃO ---
-        if result and result.deleted_count == 1 and tarefa_a_deletar:
-            user_id = str(tarefa_a_deletar.get("user_id", "anonimo"))
-            task_status = tarefa_a_deletar.get("status", "pendente") # Pega o status da tarefa deletada
-            redis_client.decr(f"user:{user_id}:tasks:status:{task_status}")
-
-             # --- NOVO: Métrica 3: Tags Mais Utilizadas (na DELEÇÃO) ---
-            tags_da_tarefa_deletada = tarefa_a_deletar.get("tags", [])
-            for tag in tags_da_tarefa_deletada:
-                redis_client.zincrby(f"user:{user_id}:tags:top", -1, tag) # Decrementa o score
-                print(f"DEBUG REDIS: Tag '{tag}' decrementada devido a deleção para user:{user_id}")
-            # --- FIM NOVO ---
-        # --- FIM NOVO ---
-
-        return result
-    except errors.InvalidId as e_invalid_id: # <--- MUDANÇA AQUI: Capture a exceção com um nome diferente
-        print(f"ERRO: FUNC - ID inválido para deletar: '{tarefa_id}' - Detalhes: {e_invalid_id}")
-        return None
-    except Exception as e:
-        print(f"DEBUG: FUNC - ERRO ao converter ObjectId ou deletar: {e}")
-    except Exception as e_general:
-        print(f"ERRO: FUNC - Erro geral ao deletar tarefa: {e_general}")
-        return None # Ou levantar uma exceção mais específica
-
-def buscar_tarefas_por_criterio(criterio: dict):
-    """
-    Busca tarefas com base em um critério, formatando os resultados.
-    """
-    tarefas_encontradas = []
-    for tarefa_db in colecao_tarefas.find(criterio):
-        # <--- SUBSTITUA TODO O CONTEÚDO DO SEU LOOP for tarefa in colecao_tarefas.find(criterio): POR ISSO:
-        tarefa_formatada = {
-            "id": str(tarefa_db["_id"]), # Garante 'id' e string
-            "titulo": tarefa_db.get("titulo"),
-            "descricao": tarefa_db.get("descricao"),
-            "status": tarefa_db.get("status"),
-            "user_id": tarefa_db.get("user_id"), # Incluir user_id ao buscar por critério
-            "tags": tarefa_db.get("tags", []),
-            "comentarios": []
-        }
-
-        if isinstance(tarefa_db.get("data_criacao"), datetime):
-            tarefa_formatada["data_criacao"] = tarefa_db.get("data_criacao").isoformat()
-        else:
-            tarefa_formatada["data_criacao"] = str(tarefa_db.get("data_criacao", ""))
-
-        comentarios_db = tarefa_db.get("comentarios", [])
-        for comentario_original in comentarios_db:
-            comentario_formatado = {
-                "autor": comentario_original.get("autor"),
-                "comentario": comentario_original.get("comentario"),
-                "data": ""
-            }
-            if isinstance(comentario_original.get("data"), datetime):
-                comentario_formatado["data"] = comentario_original.get("data").isoformat()
-            else:
-                comentario_formatado["data"] = str(comentario_original.get("data", ""))
-            tarefa_formatada["comentarios"].append(comentario_formatado)
-
-        tarefas_encontradas.append(tarefa_formatada)
-    return tarefas_encontradas
-
-def adicionar_comentario(tarefa_id: str, autor: str, comentario_texto: str):
-    """
-    Adiciona um comentário a uma tarefa específica.
-    Retorna o resultado da operação de atualização.
-    """
-    try:
-        novo_comentario = {
-            "autor": autor,
-            "comentario": comentario_texto,
-            "data": datetime.now().strftime("%Y-%m-%d %H:%M")
-        }
-        result = colecao_tarefas.update_one(
-            {"_id": ObjectId(tarefa_id)},
-            {"$push": {"comentarios": novo_comentario}}
-        )
-        return result
-    except Exception:
+def deletar_tarefa(task_uuid_param: str, solicitante_id_user: str):
+    tarefa_a_deletar = colecao_tarefas.find_one({"id": task_uuid_param}) 
+    if not tarefa_a_deletar:
         return None
     
+    # VERIFICAÇÃO DE PERMISSÃO
+    if tarefa_a_deletar.get("user_id") != solicitante_id_user:
+        raise PermissionError(f"Usuário '{solicitante_id_user}' não autorizado a deletar a tarefa '{task_uuid_param}'.")
+
+    result = colecao_tarefas.delete_one({"id": task_uuid_param})
+    if result and result.deleted_count == 1:
+        redis_user_segment = str(tarefa_a_deletar.get("user_id", "anonimo"))
+        task_status = tarefa_a_deletar.get("status", "pendente")
+        redis_client.decr(f"user:{redis_user_segment}:tasks:status:{task_status}")
+        tags_da_tarefa_deletada = tarefa_a_deletar.get("tags", [])
+        for tag in tags_da_tarefa_deletada:
+            redis_client.zincrby(f"user:{redis_user_segment}:tags:top", -1, tag)
+    return result
+
+def buscar_tarefas_por_criterio(criterio: dict) -> list[dict]:
+    tarefas_encontradas = []
+    for tarefa_db in colecao_tarefas.find(criterio).sort("data_criacao", -1):
+        fmt = _formatar_tarefa_para_frontend(tarefa_db)
+        if fmt: tarefas_encontradas.append(fmt)
+    return tarefas_encontradas
+
+def adicionar_comentario(task_uuid_param: str, id_autor_param: str, comentario_texto: str):
+    if not id_autor_param or not buscar_usuario_por_id_func(id_autor_param):
+        raise ValueError(f"ID de autor ('{id_autor_param}') inválido para adicionar comentário.")
+    now_utc = datetime.now(timezone.utc)
+    novo_comentario_doc = {
+        "id_comentario": str(uuid.uuid4()), 
+        "id_autor": id_autor_param,    
+        "comentario": comentario_texto,
+        "data": now_utc 
+    }
+    return colecao_tarefas.update_one(
+        {"id": task_uuid_param}, 
+        {"$push": {"comentarios": novo_comentario_doc}, "$set": {"data_atualizacao": now_utc}}
+    )
 
 def _reset_redis_metrics():
-    """
-    Função interna para resetar todas as chaves de métricas do Redis para um usuário.
-    Use com cautela, pois apaga todos os contadores relacionados às tarefas.
-    """
     print("DEBUG RESET: Resetando métricas Redis...")
-    for key in redis_client.scan_iter("user:*:tasks:*"):
-        redis_client.delete(key)
-    for key in redis_client.scan_iter("user:*:stats:*"): # Se tiver chaves de stats
-        redis_client.delete(key)
-    for key in redis_client.scan_iter("user:*:tags:top"): # <--- ADICIONADO: Resetar chaves de tags
-        redis_client.delete(key)
+    for key_pattern in ["user:*:tasks:*", "user:*:stats:*", "user:*:tags:top"]:
+        for key in redis_client.scan_iter(key_pattern): 
+            redis_client.delete(key)
     print("DEBUG RESET: Métricas Redis resetadas.")
 
 def _recalculate_redis_metrics():
-    """
-    Recalcula todas as métricas no Redis a partir das tarefas existentes no MongoDB.
-    Geralmente chamado após um reset ou na inicialização para garantir consistência.
-    """
     print("Iniciando recalculo das métricas Redis a partir do MongoDB...")
-    # Resetar todos os contadores antes de recalcular
     _reset_redis_metrics()
-
-    all_tasks = colecao_tarefas.find({}) # Busca todas as tarefas no MongoDB
-
-    for task_db in all_tasks:
-        user_id = str(task_db.get("user_id", "anonimo")) # Pega o user_id da tarefa
-        status = task_db.get("status", "pendente") # Pega o status da tarefa
-
-        # Métrica 1: Contadores de Status de Tarefas
-        redis_client.incr(f"user:{user_id}:tasks:status:{status}")
-
-        # Métrica 4: Tarefas criadas hoje (se a data de criação for hoje)
-        # Atenção: task_db["data_criacao"] é um objeto datetime aqui, se func.py salva datetime.now()
-        if isinstance(task_db.get("data_criacao"), datetime):
-            creation_date_str = task_db["data_criacao"].strftime("%Y-%m-%d")
-            today_str = datetime.now().strftime("%Y-%m-%d")
+    all_tasks_db = colecao_tarefas.find({})
+    for task_db in all_tasks_db:
+        redis_user_segment = str(task_db.get("user_id", "anonimo_recalc")) 
+        status = task_db.get("status", "pendente")
+        redis_client.incr(f"user:{redis_user_segment}:tasks:status:{status}")
+        data_criacao_dt = task_db.get("data_criacao")
+        if isinstance(data_criacao_dt, datetime):
+            creation_date_str = data_criacao_dt.strftime("%Y-%m-%d")
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             if creation_date_str == today_str:
-                redis_client.incr(f"user:{user_id}:tasks:created_today:{today_str}")
-                # Definir TTL para a chave diária (opcional, só para novas inserções ou sincronização)
-                # redis_client.expire(f"user:{user_id}:tasks:created_today:{today_str}", 86400 * 2)
-
-        # --- NOVO: Métrica 3: Tags Mais Utilizadas (no Recalculo) ---
+                redis_client.incr(f"user:{redis_user_segment}:tasks:created_today:{today_str}")
         tags_da_tarefa = task_db.get("tags", [])
         for tag in tags_da_tarefa:
-            # ZINCRBY: Incrementa o score da tag no Sorted Set.
-            # Se a tag não existe, ela é criada com score 0 e depois incrementada para 1.
-            redis_client.zincrby(f"user:{user_id}:tags:top", 1, tag)
-            print(f"DEBUG RECALC: Tag '{tag}' incrementada para user:{user_id}")
-        # --- FIM NOVO ---
-
-
-
-        # Adicione aqui a lógica para recalcular outras métricas se já estivessem implementadas:
-        # - Totalizadores por Período (tarefas concluídas por dia)
-        # - Tags Mais Utilizadas
-        # - Estatísticas de Produtividade (tempo médio, taxa de conclusão semanal)
-        # ...
-
+            redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
+        if status == 'concluída':
+            data_relevante_para_conclusao = task_db.get("data_atualizacao") 
+            if isinstance(data_relevante_para_conclusao, datetime):
+                completed_date_str = data_relevante_para_conclusao.strftime("%Y-%m-%d")
+                redis_client.incr(f"user:{redis_user_segment}:tasks:completed:{completed_date_str}")
     print("Recalculo das métricas Redis concluído.")

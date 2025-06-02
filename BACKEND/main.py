@@ -1,29 +1,16 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-# Removendo BeforeValidator, PlainSerializer, Annotated, PyObjectId, pois não são mais necessários
-from pydantic import BaseModel, Field, ConfigDict, field_validator # Adicionado field_validator
-from typing import List, Optional 
-from datetime import datetime, timedelta
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Dict
+from datetime import datetime, timedelta, timezone
 import traceback
-from func import _recalculate_redis_metrics
+import json
 
-from conexao import colecao_tarefas, redis_client
+import func
+from conexao import redis_client
 import redis
-# Importa as funções do seu func.py modificado
-from func import (
-    criar_tarefa,
-    listar_tarefas,
-    buscar_tarefa_por_id,
-    atualizar_tarefa,
-    adicionar_tag_a_tarefa,
-    atualizar_tag_tarefa,
-    deletar_tarefa,
-    buscar_tarefas_por_criterio,
-    adicionar_comentario
-)
-from bson import ObjectId # Necessário para lidar com IDs do MongoDB
 
-app = FastAPI()
+app = FastAPI(title="API Gerenciador de Tarefas")
 
 # Configura CORS
 app.add_middleware(
@@ -33,77 +20,129 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Modelos Pydantic ---
+# Modelo base para configuração comum, especialmente para serialização de datetime
+class APIBaseModel(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True, # Necessário para Pydantic v2 se mapeando de objetos ORM/DB (funciona para dicts também)
+        json_encoders={
+            datetime: lambda dt: dt.isoformat().replace("+00:00", "Z") # Formato ISO com Z para UTC
+        }
+    )
+
+# Modelos para Usuário
+class UserBase(APIBaseModel):
+    username: str
+
+class UserCreate(UserBase):
+    password: str # Senha em texto puro, conforme solicitado para o projeto
+
+class UserInDB(UserBase):
+    id_user: str # UUID string
+    data_criacao: datetime
+
+# Modelos para Comentário
+class ComentarioBase(APIBaseModel):
+    comentario: str
+
+class ComentarioCreateInTask(ComentarioBase): # Usado ao criar/atualizar tarefa
+    id_autor: str # UUID do usuário que está fazendo o comentário
+
+class ComentarioUpdateInTask(ComentarioCreateInTask): # Usado ao atualizar tarefa, pode ter ID de comentário existente
+    id_comentario: Optional[str] = None # UUID do comentário, se já existir
+
+class ComentarioInDB(ComentarioBase):
+    id_comentario: str # UUID do comentário
+    id_autor: str # UUID do autor
+    data: datetime
+
+# Modelos para Tarefa
+class TarefaBase(APIBaseModel):
+    titulo: str
+    descricao: str
+    status: str = Field(default="pendente", pattern="^(pendente|em andamento|concluída)$")
+    tags: List[str] = []
+
+class TarefaCreatePayload(TarefaBase):
+    user_id: str # UUID do usuário dono da tarefa
+    comentarios: List[ComentarioCreateInTask] = []
+
+class TarefaUpdatePayload(APIBaseModel): # Herdando de APIBaseModel para config
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    status: Optional[str] = Field(default=None, pattern="^(pendente|em andamento|concluída)$")
+    tags: Optional[List[str]] = None
+    # Ao atualizar, o frontend envia a lista completa de comentários como ele a vê.
+    # O backend diferencia entre novos e existentes.
+    comentarios: Optional[List[ComentarioUpdateInTask]] = None 
+
+class TarefaInDB(TarefaBase):
+    id: str # UUID da tarefa
+    user_id: str # UUID do usuário dono da tarefa
+    data_criacao: datetime
+    data_atualizacao: datetime
+    comentarios: List[ComentarioInDB] = []
+
+class APIBaseModel(BaseModel): # Certifique-se que esta classe base existe ou use BaseModel
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
+            datetime: lambda dt: dt.isoformat().replace("+00:00", "Z")
+        }
+    )
+
+# NOVO MODELO para a rota /metrics/top-tags
+class TopTagItem(APIBaseModel): # ou apenas BaseModel se não precisar de config especial
+    tag: str
+    count: int
+
+# NOVO MODELO para a rota /metrics/completed-by-day
+class CompletedByDayItem(APIBaseModel): # ou apenas BaseModel
+    date: str # A data já é uma string "AAAA-MM-DD"
+    count: int
+
+# --- Evento de Startup ---
 @app.on_event("startup")
 async def startup_event():
     try:
-        # Tenta executar um comando simples no Redis para verificar a conexão
         redis_client.ping()
         print("Conexão com Redis estabelecida com sucesso!")
+        print("Iniciando recálculo de métricas Redis no startup...")
+        func._recalculate_redis_metrics() 
+        print("Recálculo de métricas Redis concluído.")
     except redis.exceptions.ConnectionError as e:
-        print(f"ERRO: Não foi possível conectar ao Redis. Verifique se o servidor Redis está rodando. Erro: {e}")
-        # É uma boa prática levantar uma exceção aqui para que a aplicação não inicie
-        # se o banco de dados principal (Redis, neste caso, para métricas) não estiver acessível.
-        raise Exception("Falha ao conectar ao Redis. Verifique o servidor e as configurações.")
-        
-# --- Modelos Pydantic ---
+        print(f"ERRO FATAL: Não foi possível conectar ao Redis. {e}")
+        # Em um cenário real, você pode querer que a aplicação não inicie.
+        # raise Exception("Falha ao conectar ao Redis.") 
+    except Exception as e_recalc:
+        print(f"ERRO durante o recálculo de métricas no startup: {e_recalc}")
 
-# REMOVEMOS A CLASSE PyObjectId INTEIRA.
-# O ID será tratado como 'str' diretamente no modelo TarefaInDB,
-# com um validador e json_encoders para lidar com ObjectId do MongoDB.
+# --- Rotas de Usuário ---
 
+@app.post("/usuarios/", response_model=UserInDB, status_code=201, summary="Criar novo usuário")
+async def criar_novo_usuario_rota(usuario_data: UserCreate):
+    try:
+        novo_user_id_uuid = func.criar_usuario_func(usuario_data.username, usuario_data.password)
+        usuario_criado_doc = func.buscar_usuario_por_id_func(novo_user_id_uuid)
+        if not usuario_criado_doc:
+            raise HTTPException(status_code=500, detail="Erro ao recuperar usuário recém-criado.")
+        return UserInDB(**usuario_criado_doc)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao criar usuário: {str(e)}")
 
-class Comentario(BaseModel):
-    autor: str
-    comentario: str
-    data: Optional[datetime] = Field(None, description="Data e hora do comentário (gerada pelo servidor se não fornecida)")
-
-class TarefaBase(BaseModel):
-    titulo: str
-    descricao: str # Mantém como obrigatória
-    status: str = Field("pendente", pattern="^(pendente|em andamento|concluída)$") # Validação de status
-    tags: List[str] = []
-    user_id: Optional[str] = None
-    comentarios: List[Comentario] = [] # <--- GARANTA QUE ESTA LINHA ESTÁ AQUI
-
-class TarefaCreate(TarefaBase):
-    user_id: str
-
-class TarefaUpdate(BaseModel):
-    titulo: Optional[str] = None
-    descricao: Optional[str] = None
-    status: Optional[str] = Field(None, pattern="^(pendente|em andamento|concluída)$")
-    tags: Optional[List[str]] = None
-    # ESTE É O CAMPO CRUCIAL PARA ATUALIZAÇÃO
-    comentarios: Optional[List[Comentario]] = None # <--- GARANTA QUE ESTA LINHA ESTÁ AQUI
-
-
-
-class TarefaInDB(TarefaBase):
-    # Definimos 'id' como string, e usamos 'alias="_id"' para o Pydantic entender
-    # que o campo '_id' do MongoDB deve ser mapeado para 'id' no Python.
-    id: str  
-    data_criacao: str
-    comentarios: List[Comentario] = []
-
-    # Configurações para Pydantic v2
-    model_config = ConfigDict(
-        populate_by_name=True, # Permite que o _id vindo do DB seja mapeado para 'id' no modelo
-        arbitrary_types_allowed=True, # Permite que o Pydantic lide com tipos não-pydantic como ObjectId
-        
-        # ESSENCIAL: Diz ao Pydantic como serializar (converter para JSON) um ObjectId para string.
-        # Isso garante que quando o FastAPI retornar um objeto com ObjectId, ele será transformado em string.
-        json_encoders={ObjectId: str}, 
-    )
-
-    # VALIDADOR DE CAMPO: Garante que, antes da validação do tipo 'str' para 'id',
-    # se o valor for um ObjectId (vindo do MongoDB), ele seja convertido para string.
-    # Isso cobre cenários onde o ObjectId pode não ser convertido automaticamente.
-    @field_validator('id', mode='before')
-    @classmethod
-    def convert_id_to_str(cls, v):
-        if isinstance(v, ObjectId):
-            return str(v)
-        return v
+@app.get("/usuarios/{id_user_param}", response_model=UserInDB, summary="Buscar usuário por ID")
+async def buscar_usuario_rota(id_user_param: str):
+    try:
+        usuario_doc = func.buscar_usuario_por_id_func(id_user_param)
+        if not usuario_doc:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        return UserInDB(**usuario_doc)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao buscar usuário: {str(e)}")
 
 
 # --- Rotas da API ---
@@ -113,253 +152,223 @@ class TarefaInDB(TarefaBase):
 async def read_root():
     return {"message": "API de Tarefas funcionando! Acesse /docs para a documentação."}
 
-@app.post("/tarefas/", response_model=TarefaInDB, status_code=201)
-async def criar_nova_tarefa_rota(tarefa: TarefaCreate):
-    """
-    Cria uma nova tarefa.
-    """
+@app.post("/tarefas/", response_model=TarefaInDB, status_code=201, summary="Criar nova tarefa")
+async def criar_nova_tarefa_rota(tarefa_payload: TarefaCreatePayload):
     try:
-        tarefa_data = tarefa.model_dump() 
-        tarefa_id = criar_tarefa(tarefa_data)
-        
-        # Buscar a tarefa recém-criada garante que temos todos os campos padrão do DB
-        # e que o Pydantic pode processá-la via TarefaInDB.
-        tarefa_criada = buscar_tarefa_por_id(str(tarefa_id))
-        if not tarefa_criada:
+        # O payload já vem validado pelo Pydantic
+        tarefa_data_dict = tarefa_payload.model_dump()
+        tarefa_uuid = func.criar_tarefa(tarefa_data_dict)
+        tarefa_criada_dict = func.buscar_tarefa_por_id_func(tarefa_uuid)
+        if not tarefa_criada_dict:
             raise HTTPException(status_code=500, detail="Erro ao recuperar tarefa criada.")
-        
-        # Aqui o Pydantic pegará 'tarefa_criada' (que tem '_id' como chave)
-        # e, graças a 'id: str = Field(alias="_id")' e 'json_encoders',
-        # irá serializar para JSON com a chave 'id' e o valor como string.
-        return TarefaInDB(**tarefa_criada) 
+        return TarefaInDB(**tarefa_criada_dict)
+    except ValueError as ve: # Captura ValueErrors de func.py (ex: user_id inválido)
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         traceback.print_exc() 
-        raise HTTPException(status_code=500, detail=f"Erro ao criar tarefa: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao criar tarefa: {str(e)}")
 
-@app.get("/tarefas/", response_model=List[TarefaInDB])
+@app.get("/tarefas/", response_model=List[TarefaInDB], summary="Listar todas as tarefas")
 async def listar_todas_tarefas_rota():
-    """
-    Lista todas as tarefas.
-    """
     try:
-        tarefas = listar_tarefas()
-        # Ao iterar e criar TarefaInDB para cada 'tarefa', o Pydantic fará a mágica de serialização.
-        return [TarefaInDB(**tarefa) for tarefa in tarefas]
+        tarefas_list_dict = func.listar_tarefas()
+        return [TarefaInDB(**tarefa_dict) for tarefa_dict in tarefas_list_dict]
     except Exception as e:
         traceback.print_exc()
-        print(f"ERRO: Detalhes do erro na rota /tarefas/: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro interno do servidor: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao listar tarefas: {str(e)}")
 
-@app.get("/tarefas/{tarefa_id}", response_model=TarefaInDB)
-async def obter_tarefa_por_id_rota(tarefa_id: str):
-    """
-    Obtém uma tarefa específica pelo ID.
-    """
-    try: 
-        tarefa = buscar_tarefa_por_id(tarefa_id)
-        if tarefa:
-            return TarefaInDB(**tarefa)
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro ao obter tarefa: {str(e)}")
-
-
-@app.put("/tarefas/{tarefa_id}", response_model=TarefaInDB)
-async def atualizar_tarefa_existente_rota(tarefa_id: str, tarefa_update: TarefaUpdate):
-    """
-    Atualiza uma tarefa existente.
-    """
-    try:
-        dados_para_atualizar = {k: v for k, v in tarefa_update.model_dump(exclude_unset=True).items() if v is not None} 
-        if not dados_para_atualizar:
-            raise HTTPException(status_code=400, detail="Nenhum dado para atualizar fornecido.")
-
-        resultado = atualizar_tarefa(tarefa_id, dados_para_atualizar)
-        if resultado and resultado.modified_count == 1:
-            tarefa_atualizada = buscar_tarefa_por_id(tarefa_id)
-            if tarefa_atualizada:
-                return TarefaInDB(**tarefa_atualizada)
-            raise HTTPException(status_code=500, detail="Tarefa atualizada, mas não pôde ser recuperada.")
-        
-        tarefa_existente = buscar_tarefa_por_id(tarefa_id)
-        if tarefa_existente:
-            raise HTTPException(status_code=400, detail="Tarefa não foi modificada (dados idênticos ou erro).")
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro ao atualizar tarefa: {str(e)}")
-
-
-@app.delete("/tarefas/{tarefa_id}", status_code=204) 
-async def deletar_tarefa_rota(tarefa_id: str):
-    """
-    Deleta uma tarefa.
-    """
-    print(f"DEBUG: DELETE - Requisição recebida para tarefa_id: {tarefa_id}")
-    try:
-        resultado = deletar_tarefa(tarefa_id)
-        if resultado and resultado.deleted_count == 1:
-            return {"message": "Tarefa deletada com sucesso."}
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro ao deletar tarefa: {str(e)}")
-
-
-@app.post("/tarefas/{tarefa_id}/comentarios/", status_code=201)
-async def adicionar_comentario_rota(tarefa_id: str, comentario: Comentario):
-    """
-    Adiciona um comentário a uma tarefa específica.
-    """
-    try:
-        resultado = adicionar_comentario(tarefa_id, comentario.autor, comentario.comentario)
-        if resultado and resultado.modified_count == 1:
-            return {"message": "Comentário adicionado com sucesso."}
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada ou erro ao adicionar comentário.")
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro ao adicionar comentário: {str(e)}")
-
-
-@app.put("/tarefas/{tarefa_id}/tags/", response_model=TarefaInDB)
-async def adicionar_ou_atualizar_tag_rota(tarefa_id: str, tag_antiga: Optional[str] = Query(None), tag_nova: str = Query(...)):
-    """
-    Adiciona uma nova tag ou atualiza uma tag existente em uma tarefa.
-    Se 'tag_antiga' for fornecida, ela será substituída por 'tag_nova'.
-    Caso contrário, 'tag_nova' será adicionada.
-    """
-    try:
-        if tag_antiga:
-            resultado = atualizar_tag_tarefa(tarefa_id, tag_antiga, tag_nova)
-            if resultado and resultado.modified_count == 1:
-                tarefa_atualizada = buscar_tarefa_por_id(tarefa_id)
-                if tarefa_atualizada:
-                    return TarefaInDB(**tarefa_atualizada)
-                raise HTTPException(status_code=500, detail="Tag atualizada, mas tarefa não pôde ser recuperada.")
-            elif resultado and resultado.modified_count == 0:
-                raise HTTPException(status_code=400, detail=f"Tag '{tag_antiga}' não encontrada na tarefa ou '{tag_nova}' já existe.")
-        else:
-            resultado = adicionar_tag_a_tarefa(tarefa_id, tag_nova)
-            if resultado and resultado.modified_count == 1:
-                tarefa_atualizada = buscar_tarefa_por_id(tarefa_id)
-                if tarefa_atualizada:
-                    return TarefaInDB(**tarefa_atualizada)
-                raise HTTPException(status_code=500, detail="Tag adicionada, mas tarefa não pôde ser recuperada.")
-            elif resultado and resultado.modified_count == 0:
-                raise HTTPException(status_code=400, detail=f"Tag '{tag_nova}' já existe na tarefa.")
-        
-        raise HTTPException(status_code=404, detail="Tarefa ou tag não encontrada/atualizada.")
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro ao gerenciar tags: {str(e)}")
-
-
-@app.get("/tarefas/buscar/", response_model=List[TarefaInDB])
+@app.get("/tarefas/buscar/", response_model=List[TarefaInDB], summary="Buscar tarefas por critérios")
 async def buscar_tarefas_por_criterio_rota(
-    status: Optional[str] = Query(None, pattern="^(pendente|em andamento|concluída)$"),
-    data_criacao: Optional[str] = Query(None, description="Formato AAAA-MM-DD"),
-    tag: Optional[str] = Query(None)
+    status: Optional[str] = Query(default=None, pattern="^(pendente|em andamento|concluída)$"),
+    data_criacao_str: Optional[str] = Query(default=None, description="Formato AAAA-MM-DD", alias="data_criacao"),
+    tag: Optional[str] = Query(default=None),
+    user_id: Optional[str] = Query(default=None, description="ID (UUID) do usuário") 
 ):
-    """
-    Busca tarefas por status, data de criação ou tag.
-    Pode usar um ou mais parâmetros de busca.
-    """
     try:
-        filtro = {}
+        filtro: Dict[str, any] = {}
         if status:
             filtro["status"] = status
-        if data_criacao:
+        if data_criacao_str:
             try:
-                filtro["data_criacao"] = {"$regex": f"^{data_criacao}"} 
+                # Converte a string "AAAA-MM-DD" para um intervalo de datetime UTC
+                start_date = datetime.strptime(data_criacao_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                end_date = start_date + timedelta(days=1)
+                filtro["data_criacao"] = {"$gte": start_date, "$lt": end_date}
             except ValueError:
-                raise HTTPException(status_code=400, detail="Formato de data inválido. Use AAAA-MM-DD.")
+                raise HTTPException(status_code=400, detail="Formato de data inválido para 'data_criacao'. Use AAAA-MM-DD.")
         if tag:
-            filtro["tags"] = {"$in": [tag]}
+            filtro["tags"] = tag # Procura se a tag está no array de tags
+        if user_id:
+            filtro["user_id"] = user_id # Filtra pelo ID do usuário (UUID)
 
-        if not filtro:
-            raise HTTPException(status_code=400, detail="Forneça ao menos um critério de busca (status, data_criacao ou tag).")
+        # Permite busca sem filtros para listar todas, ou exige filtro se preferir
+        # if not filtro:
+        #     raise HTTPException(status_code=400, detail="Forneça ao menos um critério de busca.")
 
-        tarefas = buscar_tarefas_por_criterio(filtro)
-        return [TarefaInDB(**tarefa) for tarefa in tarefas]
+        tarefas_list_dict = func.buscar_tarefas_por_criterio(filtro)
+        if not tarefas_list_dict and any(filtro.values()): # Se houve filtro e nada foi encontrado
+             return [] # Retorna lista vazia em vez de erro, o frontend trata "nenhum resultado"
+        return [TarefaInDB(**tarefa_dict) for tarefa_dict in tarefas_list_dict]
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erro ao buscar tarefas: {str(e)}")
 
+@app.get("/tarefas/{task_uuid_param}", response_model=TarefaInDB, summary="Obter tarefa por ID")
+async def obter_tarefa_por_id_rota(task_uuid_param: str):
+    try: 
+        tarefa_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+        if tarefa_dict:
+            return TarefaInDB(**tarefa_dict)
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao obter tarefa: {str(e)}")
+
+@app.put("/tarefas/{task_uuid_param}", response_model=TarefaInDB, summary="Atualizar tarefa existente")
+async def atualizar_tarefa_existente_rota(task_uuid_param: str, tarefa_update_payload: TarefaUpdatePayload, solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição")):
+    try:
+        # Valida se o usuário solicitante existe (boa prática)
+        if not func.buscar_usuario_por_id_func(solicitante_id_user):
+            raise HTTPException(status_code=404, detail=f"Usuário solicitante com ID '{solicitante_id_user}' não encontrado.")
+
+        dados_para_atualizar = tarefa_update_payload.model_dump(exclude_unset=True) # Apenas campos enviados
+        if not dados_para_atualizar: # Se nada foi enviado para atualizar
+            # Busca a tarefa apenas para forçar a atualização de data_atualizacao e retornar
+            tarefa_existente = func.buscar_tarefa_por_id_func(task_uuid_param)
+            if not tarefa_existente:
+                 raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
+            # Chama atualizar_tarefa mesmo com payload vazio para atualizar data_atualizacao
+            func.atualizar_tarefa(task_uuid_param, {}) 
+            tarefa_rebuscada = func.buscar_tarefa_por_id_func(task_uuid_param) # Rebusca para pegar data_atualizacao nova
+            if tarefa_rebuscada: return TarefaInDB(**tarefa_rebuscada)
+            raise HTTPException(status_code=500, detail="Erro ao rebuscar tarefa após atualização mínima.")
+
+
+        resultado_update = func.atualizar_tarefa(task_uuid_param, dados_para_atualizar)
+        
+        if resultado_update and resultado_update.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada para atualização.")
+
+        if resultado_update: # Inclui modified_count >= 0 (mesmo que só data_atualizacao mude)
+            tarefa_atualizada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+            if tarefa_atualizada_dict:
+                return TarefaInDB(**tarefa_atualizada_dict)
+            raise HTTPException(status_code=500, detail="Tarefa alterada, mas não pôde ser recuperada.")
+        
+        raise HTTPException(status_code=400, detail="Erro ao atualizar tarefa ou tarefa não foi modificada.")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao atualizar tarefa: {str(e)}")
+
+@app.delete("/tarefas/{task_uuid_param}", status_code=204, summary="Deletar tarefa") 
+async def deletar_tarefa_rota(task_uuid_param: str, solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição")):
+    try:
+        if not func.buscar_usuario_por_id_func(solicitante_id_user):
+            raise HTTPException(status_code=404, detail=f"Usuário solicitante com ID '{solicitante_id_user}' não encontrado.")
+
+        resultado_delete = func.deletar_tarefa(task_uuid_param)
+        if resultado_delete and resultado_delete.deleted_count == 1:
+            return None # FastAPI não envia corpo para 204
+        
+        # Se resultado_delete for None (erro em func) ou deleted_count == 0
+        tarefa_existe = func.buscar_tarefa_por_id_func(task_uuid_param)
+        if not tarefa_existe:
+             raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
+        else: # Existe mas não foi deletada
+             raise HTTPException(status_code=500, detail="Erro ao deletar tarefa (tarefa não foi deletada).")
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao deletar tarefa: {str(e)}")
+
+@app.post("/tarefas/{task_uuid_param}/comentarios/", response_model=TarefaInDB, status_code=201, summary="Adicionar comentário a uma tarefa")
+async def adicionar_comentario_rota(task_uuid_param: str, comentario_payload: ComentarioCreateInTask, current_user_id: str = Query(..., description="ID do usuário logado que está comentando")):
+    # Em um sistema real, current_user_id viria de um token de autenticação (ex: Depends(get_current_user))
+    # Para a apresentação, passamos como query parameter ou assumimos que já está no comentario_payload.
+    # Vou assumir que o comentario_payload já tem id_autor, conforme ComentarioCreateInTask.
+    try:
+        # Validar se o id_autor do comentário corresponde ao usuário "logado" (se essa lógica for necessária)
+        # ou se o id_autor no payload é confiável.
+        # Para este exemplo, confiamos no id_autor do payload.
+        if not func.buscar_usuario_por_id_func(comentario_payload.id_autor):
+             raise HTTPException(status_code=400, detail=f"ID de autor '{comentario_payload.id_autor}' inválido.")
+
+        resultado_add = func.adicionar_comentario(task_uuid_param, comentario_payload.id_autor, comentario_payload.comentario)
+        
+        if resultado_add and resultado_add.modified_count == 1:
+            tarefa_atualizada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+            if tarefa_atualizada_dict:
+                return TarefaInDB(**tarefa_atualizada_dict)
+            raise HTTPException(status_code=500, detail="Comentário adicionado, mas tarefa não pôde ser recuperada.")
+        
+        tarefa_existe = func.buscar_tarefa_por_id_func(task_uuid_param)
+        if not tarefa_existe:
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada para adicionar comentário.")
+        else:
+            raise HTTPException(status_code=400, detail="Erro ao adicionar comentário ou tarefa não foi modificada.")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erro interno ao adicionar comentário: {str(e)}")
+
+# (Rotas de Tags podem ser ajustadas similarmente se forem mantidas separadas)
+# Por simplicidade, a atualização de tags está embutida em atualizar_tarefa_existente_rota
+
 # --- NOVO: Rotas de Métricas Redis ---
 
-@app.get("/metrics/status", response_model=dict)
-async def get_tasks_by_status(user_id: str):
-    """
-    Retorna o número de tarefas por status para um usuário específico.
-    """
+@app.get("/metrics/status", response_model=Dict[str, int], summary="Contagem de tarefas por status para um usuário")
+async def get_tasks_by_status_metrics(user_id: str = Query(..., description="ID (UUID) do usuário")):
+    # Valida se o usuário existe (opcional, mas bom)
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Usuário com ID '{user_id}' não encontrado.")
+        
     statuses = ["pendente", "em andamento", "concluída"]
-    metrics = {}
-    for status in statuses:
-        key = f"user:{user_id}:tasks:status:{status}"
+    metrics: Dict[str, int] = {}
+    for status_val in statuses:
+        key = f"user:{user_id}:tasks:status:{status_val}"
         count = redis_client.get(key)
-        metrics[status] = int(count) if count else 0 # Retorna 0 se a chave não existir
+        metrics[status_val] = int(count) if count else 0
     return metrics
 
-@app.get("/metrics/tasks-created-today", response_model=dict)
-async def get_tasks_created_today(user_id: str):
-    """
-    Retorna o número de tarefas criadas hoje para um usuário específico.
-    """
-    today_key = datetime.now().strftime("%Y-%m-%d")
-    key = f"user:{user_id}:tasks:created_today:{today_key}"
+@app.get("/metrics/tasks-created-today", response_model=Dict[str, int], summary="Tarefas criadas hoje por um usuário")
+async def get_tasks_created_today_metrics(user_id: str = Query(..., description="ID (UUID) do usuário")):
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Usuário com ID '{user_id}' não encontrado.")
+
+    today_key_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"user:{user_id}:tasks:created_today:{today_key_str}"
     count = redis_client.get(key)
     return {"count": int(count) if count else 0}
 
-# --- FIM NOVO ---
+@app.get("/metrics/top-tags", response_model=List[TopTagItem], summary="Tags mais usadas por um usuário")
+async def get_top_tags_metrics(user_id: str = Query(..., description="ID (UUID) do usuário"), count: int = Query(5, gt=0, le=20)):
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Usuário com ID '{user_id}' não encontrado.")
 
-@app.on_event("startup")
-async def startup_event():
-    try:
-        redis_client.ping()
-        print("Conexão com Redis estabelecida com sucesso!")
-        # NOVO: Chame a função de recalculo aqui, APÓS a conexão Redis
-        _recalculate_redis_metrics()
-    except redis.exceptions.ConnectionError as e:
-        print(f"ERRO: Não foi possível conectar ao Redis. Verifique se o servidor Redis está rodando. Erro: {e}")
-        raise Exception("Falha ao conectar ao Redis. Verifique o servidor e as configurações.")
-    
+    top_tags_raw = redis_client.zrevrange(f"user:{user_id}:tags:top", 0, count - 1, withscores=True)    
+    return [{"tag": tag_name, "count": int(score)} for tag_name, score in top_tags_raw]
 
-@app.get("/metrics/top-tags", response_model=List[dict])
-async def get_top_tags(user_id: str, count: int = Query(5, gt=0, le=20)):
-    """
-    Retorna as N tags mais utilizadas por um usuário.
-    """
-    # ZREVRANGE: Retorna membros de um Sorted Set em ordem decrescente de score.
-    # WITHSCORES: Inclui o score (contagem) junto com o membro (tag).
-    # O resultado é uma lista de tuplas (tag, score_bytes).
-    top_tags_raw = redis_client.zrevrange(f"user:{user_id}:tags:top", 0, count - 1, withscores=True)
-    
-    top_tags_formatted = []
-    for tag_name, score in top_tags_raw:
-        # Decodifica o nome da tag (se decode_responses=True não estiver no redis_client)
-        # e garante que o score é um inteiro.
-        top_tags_formatted.append({
-            "tag": tag_name, # Se decode_responses=True, já é string
-            "count": int(score)
-        })
-    return top_tags_formatted
-
-@app.get("/metrics/completed-by-day", response_model=List[dict])
-async def get_completed_tasks_by_day(user_id: str, days: int = Query(7, gt=0, le=90)):
-    """
-    Retorna o número de tarefas concluídas por dia para um usuário nos últimos N dias.
-    """
-    completed_by_day = []
+@app.get("/metrics/completed-by-day", response_model=List[CompletedByDayItem], summary="Tarefas concluídas por dia por um usuário")
+async def get_completed_tasks_by_day_metrics(user_id: str = Query(..., description="ID (UUID) do usuário"), days: int = Query(7, gt=0, le=90)):
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Usuário com ID '{user_id}' não encontrado.")
+        
+    completed_by_day: List[Dict[str, any]] = []
+    base_date = datetime.now(timezone.utc)
     for i in range(days):
-        current_date = datetime.now() - timedelta(days=i)
-        date_key = current_date.strftime("%Y-%m-%d")
-        key = f"user:{user_id}:tasks:completed:{date_key}"
+        current_date = base_date - timedelta(days=i)
+        date_key_str = current_date.strftime("%Y-%m-%d")
+        key = f"user:{user_id}:tasks:completed:{date_key_str}"
         count = redis_client.get(key)
-        completed_by_day.append({
-            "date": date_key,
-            "count": int(count) if count else 0
-        })
-    # Retorna os dias em ordem crescente (mais antigo para mais recente)
+        completed_by_day.append({"date": date_key_str, "count": int(count) if count else 0})
     return list(reversed(completed_by_day))
