@@ -9,7 +9,7 @@
     "**/tsconfig.*": true,
     "**/eslint.config.js": true,
     "**/public": true,
-    "**/index.html": true,
+    "**/index.html": false,
     "**/package.json": true,
     "**/package-lock.json": true,
     "**/.gitignore": true,
