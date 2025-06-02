@@ -1,15 +1,18 @@
 // App.tsx
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import Modal from 'react-bootstrap/Modal';
-import Button from 'react-bootstrap/Button';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import TaskForm from './components/TaskForm';
-import CustomNavbar from './components/Navbar';
-import Dashboard from './components/Dashboard';
-import TaskSearch from './components/TaskSearch'; // <--- NOVA IMPORTAÇÃO
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Button as BootstrapButton, ButtonGroup } from 'react-bootstrap'; // Para os botões de filtro
+import {
+  TaskForm,
+  CustomNavbar,
+  Dashboard,
+  TaskSearch,
+  TaskList,
+  TaskViewModal,
+  TaskEditModal
+} from './components';
 import type { Task, User } from './types/interfaces';
-import './App.css';
 
 function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -19,367 +22,225 @@ function App() {
   const [showViewModal, setShowViewModal] = useState<boolean>(false);
   const [taskToView, setTaskToView] = useState<Task | null>(null);
 
-   // Estados para o Modal de Edição
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
-  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null); // Armazena a tarefa a ser editada
+  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
 
-  // Estado para o usuário atualmente logado
+
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentSearchFilters, setCurrentSearchFilters] = useState<{
+    status?: string;
+    data_criacao?: string;
+    tag?: string;
+    user_id?: string; // Este campo controlará se são "minhas" ou "todas" (se ausente)
+  }>({});
 
-  // NOVO ESTADO: Armazenar os filtros de pesquisa atuais
-  const [currentSearchFilters, setCurrentSearchFilters] = useState<{ status?: string; date?: string; tag?: string }>({});
-
-
-  const userMap: { [key: string]: string } = {
-    '1': 'Matheus',
-    '2': 'Bruno',
-    // Adicione outros usuários de teste conforme necessário
-  }
-
-  // Função para simular o login, recebendo o objeto User
-  const handleLogin = (user: User) => {
-    setCurrentUser(user);
-    alert(`Usuário ${user.username} logado!`);
+  // Mapa para nomes de usuário (substitua pelos UUIDs e nomes reais do seu DB)
+  const NOME_USUARIOS_CONHECIDOS: { [key: string]: string } = {
+    'a1b9f8e7-5c3d-4e2a-8f6b-9c1d0a7e4f2a': 'Matheus',
+    'c3d8e2f1-9a7b-4d6c-8a1e-0f5b3c9d7e4b': 'Bruno',
   };
 
   const getUsernameById = (userId: string | undefined): string => {
     if (!userId) return 'Desconhecido';
-    return userMap[userId] || `Usuário ID: ${userId}`; // Retorna o nome ou o ID se não encontrar no mapa
+    if (NOME_USUARIOS_CONHECIDOS[userId]) {
+      return NOME_USUARIOS_CONHECIDOS[userId];
+    }
+    if (currentUser && currentUser.id_user === userId) {
+      return currentUser.username;
+    }
+    return `Usuário (${userId.substring(0, 6)}...)`;
   };
 
-  // Função para simular o logout
-  const handleLogout = () => {
-    setCurrentUser(null);
-    alert('Logout realizado!');
-  };
-
-  // MUDANÇA AQUI: fetchTasks agora pode receber filtros
-  const fetchTasks = async (filters: { status?: string; date?: string; tag?: string } = {}) => {
+  const fetchTasks = async (filters: typeof currentSearchFilters = {}) => {
     setLoadingTasks(true);
     setErrorTasks(null);
     try {
+      const activeFilters: Record<string, string> = {};
+      if (filters.status) activeFilters.status = filters.status;
+      if (filters.data_criacao) activeFilters.data_criacao = filters.data_criacao;
+      if (filters.tag) activeFilters.tag = filters.tag;
+      if (filters.user_id) activeFilters.user_id = filters.user_id;
+
       let url = 'http://localhost:8000/tarefas/';
-      let params: any = {};
-
-      if (Object.keys(filters).length > 0) {
-        url = 'http://localhost:8000/tarefas/buscar/';
-        params = filters; // Se houver filtros, usa a rota de busca e os parâmetros
+      // Sempre usa a rota de busca se houver filtros ativos, ou para buscar todas se não houver user_id.
+      // Se activeFilters estiver vazio, busca todas as tarefas (comportamento padrão da rota /tarefas/buscar/ sem params).
+      if (Object.keys(activeFilters).length > 0 || !filters.user_id) { // Ajuste aqui
+         url = 'http://localhost:8000/tarefas/buscar/';
       }
-
-      const response = await axios.get<Task[]>(url, { params });
+      
+      console.log("Buscando tarefas com URL:", url, "e filtros:", activeFilters);
+      const response = await axios.get<Task[]>(url, { params: activeFilters });
       setTasks(response.data);
-      // Se a busca retornar 404 por nenhum resultado, a requisição irá para o catch
-      // Mas se o backend retornar [], isso será tratado aqui
     } catch (err: any) {
-      // Melhorar o tratamento de erros para a busca
+      // ... (tratamento de erro como antes) ...
       if (axios.isAxiosError(err) && err.response) {
         if (err.response.status === 404 && Object.keys(filters).length > 0) {
-            // Se for 404 na busca e houver filtros, significa "nenhum resultado"
-            setTasks([]); // Limpa a lista de tarefas
-            setErrorTasks("Nenhuma tarefa encontrada com os critérios fornecidos.");
-        } else if (err.response.status === 400 && Object.keys(filters).length === 0) {
-            // Se for 400 na busca sem filtros, significa que o backend exigiu filtros
-            // (se você manter a HTTPException para "Forneça ao menos um critério")
-            setErrorTasks(`Erro de busca: ${err.response.data.detail || err.message}`);
-            setTasks([]);
+          setTasks([]);
+          setErrorTasks("Nenhuma tarefa encontrada com os critérios fornecidos.");
         } else {
-            setErrorTasks(`Erro ao carregar tarefas: ${err.response.data.detail || err.message}`);
-            console.error('Erro ao carregar tarefas:', err);
+          setErrorTasks(`Erro ao carregar tarefas: ${err.response.data.detail || err.message}`);
         }
       } else {
         setErrorTasks(`Erro desconhecido ao carregar tarefas: ${err.message}`);
-        console.error('Erro ao carregar tarefas:', err);
       }
+      console.error('Erro ao carregar tarefas:', err);
     } finally {
       setLoadingTasks(false);
     }
   };
 
-  // MUDANÇA AQUI: Dispara fetchTasks com os filtros ao montar
+  // useEffect para buscar tarefas quando os filtros mudam.
   useEffect(() => {
-    fetchTasks(currentSearchFilters); // Carrega com os filtros iniciais (vazios)
-  }, [currentSearchFilters]); // Recarrega quando os filtros de busca mudam
+    fetchTasks(currentSearchFilters);
+  }, [currentSearchFilters]); // Apenas currentSearchFilters como dependência
 
-  // NOVO: Função para lidar com a submissão da pesquisa
-  const handleSearchSubmit = (filters: { status?: string; date?: string; tag?: string }) => {
-    setCurrentSearchFilters(filters); // Atualiza os filtros, o useEffect acima fará a busca
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+    // Ao logar, define para "Minhas Tarefas" por padrão, limpando outros filtros de busca
+    setCurrentSearchFilters({ user_id: user.id_user });
+    alert(`Usuário ${user.username} logado! (ID: ${user.id_user})`);
   };
 
-  // NOVO: Função para limpar a pesquisa
+  const handleLogout = () => {
+    setCurrentUser(null);
+    // Ao deslogar, define para "Todas as Tarefas" (sem user_id), limpando outros filtros
+    setCurrentSearchFilters({});
+    alert('Logout realizado!');
+  };
+  
+  // Funções para alternar a visualização de tarefas
+  const switchToMyTasks = () => {
+    if (currentUser && currentUser.id_user) {
+      // Mantém outros filtros (status, data, tag) e adiciona/garante user_id
+      setCurrentSearchFilters(prevFilters => ({
+        ...prevFilters,
+        user_id: currentUser.id_user
+      }));
+    }
+  };
+
+  const switchToAllTasks = () => {
+    // Mantém outros filtros (status, data, tag) e remove user_id
+    setCurrentSearchFilters(prevFilters => {
+      const { user_id, ...rest } = prevFilters;
+      return rest;
+    });
+  };
+
+  const handleSearchSubmit = (searchComponentFilters: { status?: string; data_criacao?: string; tag?: string }) => {
+    // Combina os filtros do TaskSearch com o filtro de user_id existente (ou ausência dele)
+    setCurrentSearchFilters(prevFilters => ({
+      ...searchComponentFilters, // Filtros do TaskSearch (status, data, tag)
+      user_id: prevFilters.user_id // Mantém o user_id (ou ausência) definido pelos botões de alternância
+    }));
+  };
+
   const handleClearSearch = () => {
-    setCurrentSearchFilters({}); // Limpa os filtros, o useEffect acima fará a busca completa
-    setErrorTasks(null); // Limpa mensagens de erro de busca
+    // Limpa status, data, tag, mas mantém o user_id se estiver definido (para "Minhas Tarefas")
+    setCurrentSearchFilters(prevFilters => {
+      const newFilters: typeof currentSearchFilters = {};
+      if (prevFilters.user_id) {
+        newFilters.user_id = prevFilters.user_id;
+      }
+      return newFilters;
+    });
+    setErrorTasks(null);
   };
 
-  const handleTaskAdded = () => {
-    fetchTasks({}); // Recarrega todas as tarefas após adicionar/atualizar
+  // ... (handleTaskAddedOrUpdated, handleViewTask, etc. como antes) ...
+  const handleTaskAddedOrUpdated = () => {
+    fetchTasks(currentSearchFilters);
   };
-
-  const handleViewTask = (task: Task) => {
-    setTaskToView(task);
-    setShowViewModal(true);
-  };
-
-  const handleCloseViewModal = () => {
-    setShowViewModal(false);
-    setTaskToView(null);
-  };
-
+  const handleViewTask = (task: Task) => { setTaskToView(task); setShowViewModal(true); };
+  const handleCloseViewModal = () => { setShowViewModal(false); setTaskToView(null); };
   const handleEditTask = (taskId: string) => {
     const taskFound = tasks.find(task => task.id === taskId);
     if (taskFound) {
-      setTaskToEdit(taskFound);
-      setShowEditModal(true);
-    } else {
-      console.warn(`Tarefa com ID ${taskId} não encontrada para edição.`);
-      alert("Tarefa não encontrada para edição. Tente recarregar a página.");
-    }
+      if (currentUser && currentUser.id_user === taskFound.user_id) {
+        setTaskToEdit(taskFound); setShowEditModal(true);
+      } else { alert("Você não tem permissão para editar esta tarefa."); }
+    } else { alert("Tarefa não encontrada para edição."); }
   };
-
-  const handleCloseEditModal = () => {
-    setShowEditModal(false);
-    setTaskToEdit(null);
-  };
-
+  const handleCloseEditModal = () => { setShowEditModal(false); setTaskToEdit(null); };
   const handleDeleteTask = async (taskId: string) => {
+    if (!currentUser || !currentUser.id_user) { alert("Você precisa estar logado para excluir tarefas."); return; }
     if (window.confirm('Tem certeza que deseja excluir esta tarefa?')) {
       try {
-        await axios.delete(`http://localhost:8000/tarefas/${taskId}`);
-        fetchTasks({}); // Recarrega todas as tarefas após a exclusão
-      } catch (err: any) {
-        setErrorTasks(`Erro ao excluir tarefa: ${err.message}`);
-        console.error('Erro ao excluir tarefa:', err);
-      }
+        await axios.delete(`http://localhost:8000/tarefas/${taskId}`, {
+          params: { solicitante_id_user: currentUser.id_user }
+        });
+        handleTaskAddedOrUpdated(); 
+      } catch (err: any) { /* ... (tratamento de erro) ... */ }
+    }
+  };
+  const getStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'pendente': return 'bg-warning text-dark';
+      case 'em andamento': return 'bg-primary text-white'; 
+      case 'concluída': return 'bg-success text-white'; 
+      default: return 'bg-secondary text-white'; 
     }
   };
 
-  const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'pendente':
-        return 'bg-warning text-dark';
-      case 'em andamento':
-        return 'bg-primary';
-      case 'concluída':
-        return 'bg-success';
-      default:
-        return 'bg-secondary';
-    }
-  };
 
   return (
     <Router>
-      <CustomNavbar
-        currentUser={currentUser}
-        onLogin={handleLogin}
-        onLogout={handleLogout}
-      />
+      <CustomNavbar currentUser={currentUser} onLogin={handleLogin} onLogout={handleLogout} />
       <div className="container mt-4">
-        <div className="row">
-          <div className="col-md-8 offset-md-2">
+        <Routes>
+          <Route path="/dashboard" element={ currentUser ? <Dashboard currentUser={currentUser} /> : <Navigate to="/" replace /> } />
+          <Route path="/adicionar-tarefa" element={ currentUser ? <TaskForm onTaskAdded={handleTaskAddedOrUpdated} currentUser={currentUser} /> : <Navigate to="/" replace /> }/>
+          <Route path="/" element={
+            <div className="row">
+              <div className="col-md-10 offset-md-1">
+                <TaskSearch onSearch={handleSearchSubmit} onClear={handleClearSearch} />
+                
+                {/* Botões para alternar visualização de tarefas */}
+                {currentUser && ( // Só mostra se estiver logado
+                  <div className="my-3">
+                    <ButtonGroup aria-label="Filtro de visualização de tarefas">
+                      <BootstrapButton 
+                        variant={currentSearchFilters.user_id === currentUser.id_user ? "primary" : "outline-primary"}
+                        onClick={switchToMyTasks}
+                        size="sm"
+                      >
+                        Minhas Tarefas
+                      </BootstrapButton>
+                      <BootstrapButton 
+                        variant={!currentSearchFilters.user_id ? "primary" : "outline-primary"}
+                        onClick={switchToAllTasks}
+                        size="sm"
+                      >
+                        Todas as Tarefas
+                      </BootstrapButton>
+                    </ButtonGroup>
+                  </div>
+                )}
+                <hr className="my-4"/>
+                <h3 className="mb-3">
+                  {currentSearchFilters.user_id && currentUser && currentSearchFilters.user_id === currentUser.id_user
+                    ? `Tarefas de ${currentUser.username}`
+                    : "Tarefas Visíveis"}
+                </h3>
+                <TaskList
+                  tasks={tasks}
+                  loading={loadingTasks}
+                  error={errorTasks}
+                  currentSearchFilters={currentSearchFilters}
+                  onViewTask={handleViewTask}
+                  onEditTask={handleEditTask}
+                  onDeleteTask={handleDeleteTask}
+                  getStatusBadgeClass={getStatusBadgeClass}
+                  currentUser={currentUser}
+                />
+              </div>
+            </div>
+          } />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
 
-            <Routes>
-
-      <Route path="/dashboard" element={<Dashboard currentUser={currentUser} />} />
-              <Route path="/" element={
-                <>
-                  <TaskSearch onSearch={handleSearchSubmit} onClear={handleClearSearch} />
-
-                  <h3>Tarefas Cadastradas</h3>
-                  {loadingTasks ? (
-                    <div className="alert alert-info" role="alert">
-                      Carregando tarefas...
-                    </div>
-                  ) : errorTasks ? (
-                    <div className="alert alert-danger" role="alert">
-                      {errorTasks}
-                    </div>
-                  ) : tasks.length === 0 && Object.keys(currentSearchFilters).length > 0 ? (
-                    <div className="alert alert-light" role="alert">
-                      Nenhuma tarefa encontrada com os critérios fornecidos.
-                    </div>
-                  ) : tasks.length === 0 ? (
-                    <div className="alert alert-light" role="alert">
-                      Nenhuma tarefa cadastrada ainda. Adicione uma usando o formulário
-                      acima!
-                    </div>
-                  ) : (
-                    <div>
-                      {tasks.map((task) => (
-                        <div key={task.id} className="card mb-3">
-                          <div className="card-body">
-                            <div className="d-flex justify-content-between align-items-center mb-2">
-                              <h5 className="card-title mb-0">{task.titulo}</h5>
-                              <span
-                                className={`badge ${getStatusBadgeClass(task.status)}`}
-                              >
-                                {task.status}
-                              </span>
-                            </div>
-                            <p
-                              className="card-text text-truncate"
-                              style={{ maxWidth: '100%' }}
-                            >
-                              {task.descricao}
-                            </p>
-                            <p className="card-text">
-                              <small className="text-muted">
-                                Criado em:{' '}
-                                {new Date(task.data_criacao).toLocaleDateString()}
-                              </small>
-                            </p>
-                            <div className="mt-3 d-flex justify-content-end">
-                              <button
-                                className="btn btn-outline-info btn-sm me-2"
-                                onClick={() => handleViewTask(task)}
-                                title="Visualizar"
-                              >
-                                {' '}
-                                <span className="d-none d-md-inline">Visualizar</span>
-                              </button>
-                              <button
-                                className="btn btn-outline-warning btn-sm me-2"
-                                onClick={() => handleEditTask(task.id)}
-                                title="Editar"
-                              >
-                                <span className="d-none d-md-inline">Editar</span>
-                              </button>
-                              <button
-                                className="btn btn-outline-danger btn-sm"
-                                onClick={() => handleDeleteTask(task.id)}
-                                title="Excluir"
-                              >
-                                <span className="d-none d-md-inline">Excluir</span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              } />
-              <Route path="/adicionar-tarefa" element={
-                <>
-                  <TaskForm onTaskAdded={handleTaskAdded} currentUser={currentUser} />
-                  <hr className="my-4" />
-                </>
-              } />
-            </Routes>
-
-            {/* Modal de Visualização de Tarefa */}
-            {taskToView && (
-              <Modal
-                show={showViewModal}
-                onHide={handleCloseViewModal}
-                size="lg"
-                centered
-              >
-                <Modal.Header closeButton>
-                  <Modal.Title>{taskToView.titulo}</Modal.Title>
-                </Modal.Header>
-                <Modal.Body>
-                  <p>
-                    <strong>Descrição Completa:</strong>
-                  </p>
-                  <p style={{ whiteSpace: 'pre-wrap' }}>{taskToView.descricao}</p>
-                  <hr />
-                  <p>
-                    <strong>Status:</strong>{' '}
-                    <span
-                      className={`badge ${getStatusBadgeClass(
-                        taskToView.status
-                      )}`}
-                    >
-                      {taskToView.status}
-                    </span>
-                  </p>
-                  <p>
-                    <strong>Data de Criação:</strong>{' '}
-                    {new Date(taskToView.data_criacao).toLocaleDateString()} às{' '}
-                    {new Date(taskToView.data_criacao).toLocaleTimeString()}
-                  </p>
-
-                  {taskToView.user_id && (
-                    <p>
-                      <strong>Criado por:</strong>{' '}
-                      {getUsernameById(taskToView.user_id)}
-                    </p>
-                  )}
-
-                  {taskToView.tags && taskToView.tags.length > 0 && (
-                    <div className="mt-3">
-                      <h6>Tags:</h6>
-                      {taskToView.tags.map((tag) => (
-                        <span key={tag} className="badge bg-secondary me-1">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {taskToView.comentarios &&
-                    taskToView.comentarios.length > 0 && (
-                      <div className="mt-3">
-                        <h6>Comentários:</h6>
-                        <ul className="list-unstyled">
-                          {taskToView.comentarios.map((comment, idx) => (
-                            <li
-                              key={idx}
-                              className="mb-2 p-2 bg-light border rounded"
-                            >
-                              <p className="mb-0">
-                                <strong>{comment.autor}</strong>{' '}
-                                        {/* <--- MUDANÇA AQUI: Adicione uma verificação para comment.data */}
-                                {comment.data ? ( // Se comment.data existe, então tente formatar a data
-                                  <small className="text-muted">
-                                    ({new Date(comment.data).toLocaleDateString()}):
-                                  </small>
-                                  ) : (
-                                  <small className="text-muted"> (Data desconhecida):</small> // Opcional: fallback de texto
-                                  )}
-                                      </p>
-                              <p className="mb-0">{comment.comentario}</p>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                </Modal.Body>
-                <Modal.Footer>
-                  <Button variant="secondary" onClick={handleCloseViewModal}>
-                    Fechar
-                  </Button>
-                </Modal.Footer>
-              </Modal>
-            )}
-
-            {/* Modal de Edição de Tarefa */}
-            {/* O Modal.Header não tem Modal.Title porque o TaskForm agora cuida disso */}
-            {taskToEdit && (
-              <Modal
-                show={showEditModal}
-                onHide={handleCloseEditModal}
-                size="lg"
-                centered
-              >
-                <Modal.Header closeButton>
-                  {/* Título será renderizado pelo TaskForm */}
-                </Modal.Header>
-                <Modal.Body>
-                  <TaskForm
-                    taskToEdit={taskToEdit}
-                    onTaskUpdated={() => {
-                      fetchTasks(); // Recarrega a lista
-                      handleCloseEditModal(); // Fecha o modal
-                    }}
-                    onClose={handleCloseEditModal}
-                    currentUser={currentUser}
-                  />
-                </Modal.Body>
-              </Modal>
-            )}
-          </div>
-        </div>
+        <TaskViewModal show={showViewModal} task={taskToView} onHide={handleCloseViewModal} getUsernameById={getUsernameById} getStatusBadgeClass={getStatusBadgeClass} currentUser={currentUser} />
+        <TaskEditModal show={showEditModal} taskToEdit={taskToEdit} onHide={handleCloseEditModal} onTaskUpdated={handleTaskAddedOrUpdated} currentUser={currentUser} />
       </div>
     </Router>
   );

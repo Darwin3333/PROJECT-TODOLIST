@@ -1,29 +1,33 @@
 // src/components/TaskForm.tsx
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import type{ CommentPayload, TaskPayload, User, Task} from '../types/interfaces';
-import './TaskForm.css';
+import { Button } from 'react-bootstrap';
+import type {
+  CommentForPayload,
+  TaskToCreatePayload,
+  TaskToUpdatePayload,
+  User,
+  Task,
+  CommentForDisplay,
+} from '../types/interfaces';
+// REMOVA A LINHA: import './TaskForm.css'; (se ainda existir)
 
 export interface TaskFormProps {
-  onTaskAdded?: () => void; // Opcional, pois na edição usaremos onTaskUpdated
-  onTaskUpdated?: () => void; // NOVO: Callback para quando a tarefa for atualizada
-  onClose?: () => void; // NOVO: Para fechar o modal, se TaskForm estiver dentro de um
+  onTaskAdded?: () => void;
+  onTaskUpdated?: () => void;
+  onClose?: () => void;
   currentUser: User | null;
-  taskToEdit?: Task | null; // NOVO: A tarefa a ser editada (opcional)
+  taskToEdit?: Task | null;
 }
-const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit } : TaskFormProps) => {
+
+const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit } : TaskFormProps ) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
-  const [status, setStatus] = useState<TaskPayload['status']>('pendente');
-
-  // Estados para Tags
+  const [status, setStatus] = useState<TaskToCreatePayload['status']>('pendente');
   const [currentTag, setCurrentTag] = useState<string>('');
   const [tags, setTags] = useState<string[]>([]);
-
-  // Estados para Comentários
   const [currentCommentText, setCurrentCommentText] = useState<string>('');
-  const [comments, setComments] = useState<CommentPayload[]>([]);
-
+  const [comments, setComments] = useState<CommentForPayload[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -33,198 +37,170 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
       setTitulo(taskToEdit.titulo);
       setDescricao(taskToEdit.descricao);
       setStatus(taskToEdit.status);
-      setTags(taskToEdit.tags || []); // Garante que tags é um array
-      setComments(taskToEdit.comentarios || []); // Garante que comments é um array
+      setTags(taskToEdit.tags || []);
+      const commentsFromTask: CommentForPayload[] = (taskToEdit.comentarios || []).map(
+        (comment: CommentForDisplay) => ({
+          id_comentario: comment.id_comentario,
+          id_autor: comment.id_autor,
+          comentario: comment.comentario,
+          data: comment.data, // Preserva data original (string ISO)
+        })
+      );
+      setComments(commentsFromTask);
       setError(null);
       setSuccess(null);
     } else {
-      // Limpa o formulário se não estiver em modo edição (para nova tarefa)
       setTitulo('');
       setDescricao('');
       setStatus('pendente');
       setTags([]);
       setComments([]);
+      setCurrentTag('');
       setCurrentCommentText('');
       setError(null);
       setSuccess(null);
     }
-  }, [taskToEdit]); // Dependência: executa quando taskToEdit muda
+  }, [taskToEdit]);
 
-  // Função para adicionar uma tag
   const handleAddTag = () => {
     if (currentTag.trim() && !tags.includes(currentTag.trim())) {
-      // Garante que não é vazio e não é duplicado
       setTags([...tags, currentTag.trim()]);
       setCurrentTag('');
     }
   };
 
-  // Função para remover uma tag
   const handleRemoveTag = (tagToRemove: string) => {
     setTags(tags.filter((tag) => tag !== tagToRemove));
   };
 
-  // Função para adicionar um comentário
   const handleAddComment = () => {
-    if (!currentUser || !currentUser.username) {
+    if (!currentUser || !currentUser.id_user) {
       setError("Você precisa estar logado para adicionar um comentário.");
       return;
     }
-
-    if (currentCommentText.trim()) { // Apenas verifica o texto do comentário, não o autor
-      const newComment: CommentPayload = {
-        autor: currentUser.username, // <--- PEGA O NOME DE QUEM ESTÁ LOGADO
+    if (currentCommentText.trim()) {
+      const newComment: CommentForPayload = {
+        id_autor: currentUser.id_user,
         comentario: currentCommentText.trim(),
       };
       setComments([...comments, newComment]);
       setCurrentCommentText('');
+      setError(null);
     } else {
-      setError("O comentário não pode ser vazio."); // Adicione esta mensagem de erro se o texto estiver vazio
+      setError("O comentário não pode ser vazio.");
     }
   };
 
-  // Função para remover um comentário
   const handleRemoveComment = (indexToRemove: number) => {
     setComments(comments.filter((_, index) => index !== indexToRemove));
   };
 
-   const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setSuccess(null);
 
-    // Se estiver criando e não houver usuário logado
-    if (!taskToEdit && !currentUser) {
-      setError("Por favor, faça login para criar uma tarefa.");
+    if (!currentUser || !currentUser.id_user) {
+      setError("Por favor, faça login para realizar esta ação.");
       setLoading(false);
       return;
     }
 
-       // <--- ADICIONE ESTE BLOCO AGORA: INÍCIO DO TRATAMENTO DE COMENTÁRIOS PARA ENVIO
-    const formattedComments: CommentPayload[] = comments.map(comment => {
-        let commentData: string | undefined = undefined; // Inicializa como undefined
-
-        // Verifica se comment.data existe e é uma string (não nula/undefined)
-        if (comment.data && typeof comment.data === 'string') {
-            const trimmedData = comment.data.trim(); // Remove espaços em branco
-            if (trimmedData !== '') { // Verifica se a string não está vazia após trim
-                try {
-                    const dateObj = new Date(trimmedData);
-                    if (!isNaN(dateObj.getTime())) { // Verifica se a data é válida
-                        commentData = dateObj.toISOString(); // Converte para string ISO 8601
-                    } else {
-                        // Se a string de data é inválida, commentData permanece undefined
-                        console.warn("Invalid date string found in comment (will be omitted):", trimmedData);
-                    }
-                } catch (e) {
-                    // Erro ao tentar criar Date, então commentData permanece undefined
-                    console.warn("Error parsing comment date (will be omitted):", trimmedData, e);
-                }
-            }
-        }
-        // Se comment.data for undefined (comentário recém-adicionado localmente sem data),
-        // ou se for uma string vazia ou inválida, commentData permanecerá undefined.
-
-        return {
-            autor: comment.autor,
-            comentario: comment.comentario,
-            // Inclua a data apenas se ela for definida e válida
-            ...(commentData !== undefined && { data: commentData })
-        };
-    });
-    // <--- FIM DO BLOCO ADICIONADO
-
-    const taskData: TaskPayload = {
-      titulo,
-      descricao,
-      status,
-      tags,
-      comentarios: formattedComments,
-      user_id: currentUser?.id // user_id só é necessário na criação, mas pode ser enviado na atualização
-    };
-
     try {
       let response;
       if (taskToEdit) {
-        // Modo Edição: Faz um PUT
+        // Modo Edição: PUT
+        const updatePayload: TaskToUpdatePayload = {
+          // Enviamos todos os campos que podem ser alterados.
+          // O backend pode ter lógica para lidar com campos não alterados se o modelo Pydantic for flexível.
+          titulo: titulo,
+          descricao: descricao,
+          status: status,
+          tags: tags,
+          comentarios: comments, // comments já está como CommentForPayload[]
+        };
         response = await axios.put(
-          `http://localhost:8000/tarefas/${taskToEdit.id}`,
-          taskData // Envia todos os campos, mesmo que nem todos sejam atualizáveis no backend
+          `http://localhost:8000/tarefas/${taskToEdit.id}`, // taskToEdit.id é o UUID
+          updatePayload,
+          { // Adiciona o params para enviar solicitante_id_user
+            params: {
+              solicitante_id_user: currentUser.id_user // <-- MUDANÇA AQUI
+            }
+          }
         );
-        setSuccess(
-          `Tarefa "${response.data.titulo}" (ID: ${response.data.id}) atualizada com sucesso!`
-        );
-        if (onTaskUpdated) {
-          onTaskUpdated(); // Chama o callback de atualização
-        }
+        setSuccess(`Tarefa "${response.data.titulo}" atualizada!`);
+        if (onTaskUpdated) onTaskUpdated();
       } else {
-        // Modo Criação: Faz um POST
-        response = await axios.post(
-          'http://localhost:8000/tarefas/',
-          taskData
-        );
-        setSuccess(
-          `Tarefa "${response.data.titulo}" (ID: ${response.data.id}) criada com sucesso!`
-        );
-        if (onTaskAdded) {
-          onTaskAdded(); // Chama o callback de adição
-        }
-      }
-
-      // Limpa o formulário APENAS se estiver no modo de criação ou se o modal for fechado
-      if (!taskToEdit) { // Limpa apenas se for criação
+        // Modo Criação: POST
+        const createPayload: TaskToCreatePayload = {
+          titulo,
+          descricao,
+          status,
+          tags,
+          // Para criar, backend espera comentários sem id_comentario e sem data pré-definida
+          comentarios: comments.map(c => ({ 
+            id_autor: c.id_autor,
+            comentario: c.comentario,
+          })),
+          user_id: currentUser.id_user,
+        };
+        response = await axios.post('http://localhost:8000/tarefas/', createPayload);
+        setSuccess(`Tarefa "${response.data.titulo}" criada!`);
+        if (onTaskAdded) onTaskAdded();
+        // Limpa campos somente na criação bem-sucedida
         setTitulo('');
         setDescricao('');
         setStatus('pendente');
         setTags([]);
         setCurrentTag('');
         setComments([]);
-
         setCurrentCommentText('');
       }
 
-      // Opcional: fechar o modal automaticamente após um sucesso na edição
-      if (taskToEdit && onClose) {
-          setTimeout(() => onClose(), 1500); // Fecha após 1.5s
+      if (taskToEdit && onClose) { // Fecha o modal de edição após sucesso
+        setTimeout(() => onClose(), 1500); 
       }
 
     } catch (err: any) {
       if (axios.isAxiosError(err) && err.response) {
-        setError(
-          `Erro ao ${taskToEdit ? 'atualizar' : 'criar'} tarefa: ${err.response.data.detail || err.message}`
-        );
+        if (err.response.status === 403) { // Erro de permissão do backend
+          setError("Permissão negada: Você não é o dono desta tarefa ou não pode realizar esta ação.");
+        } else {
+          setError(`Erro: ${err.response.data.detail || err.message}`);
+        }
       } else {
         setError(`Erro desconhecido: ${err.message}`);
       }
-      console.error(`Erro na ${taskToEdit ? 'atualização' : 'criação'} da tarefa:`, err);
+      console.error("Erro no handleSubmit do TaskForm:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  // O JSX do formulário permanece o mesmo da última versão (com classes Bootstrap)
+  // Apenas certifique-se que os imports e props estão corretos.
   return (
-    <div
-      className='task-form-container'
-    >
-      <h2>{taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}</h2>
+    <div className="p-3 p-md-4 border rounded bg-light shadow-sm">
+      <h3 className="mb-4 text-center">{taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}</h3>
       <form onSubmit={handleSubmit}>
-        {/* Campos Título, Descrição, Status - permanecem os mesmos */}
-        <div className='form-group'>
-          <label htmlFor="titulo">Título:</label>
+        <div className="mb-3">
+          <label htmlFor="titulo" className="form-label fw-bold">Título:</label>
           <input
             type="text"
             id="titulo"
+            className="form-control"
             value={titulo}
             onChange={(e) => setTitulo(e.target.value)}
             required
           />
         </div>
 
-        <div className='form-group'>
-          <label htmlFor="descricao">Descrição:</label>
+        <div className="mb-3">
+          <label htmlFor="descricao" className="form-label fw-bold">Descrição:</label>
           <textarea
             id="descricao"
+            className="form-control"
             value={descricao}
             onChange={(e) => setDescricao(e.target.value)}
             required
@@ -232,12 +208,13 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
           ></textarea>
         </div>
 
-        <div className='form-group'>
-          <label htmlFor="status">Status:</label>
+        <div className="mb-3">
+          <label htmlFor="status" className="form-label fw-bold">Status:</label>
           <select
             id="status"
+            className="form-select"
             value={status}
-            onChange={(e) => setStatus(e.target.value as TaskPayload['status'])}
+            onChange={(e) => setStatus(e.target.value as TaskToCreatePayload['status'])}
           >
             <option value="pendente">Pendente</option>
             <option value="em andamento">Em Andamento</option>
@@ -245,81 +222,66 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
           </select>
         </div>
 
-        {/* Campo para Tags */}
-        <div className="tags-section">
-          <label htmlFor="tagInput">Adicionar Tags:</label>
-          <div className="tag-input-group">
+        <div className="mb-3 p-3 border rounded bg-white">
+          <label htmlFor="tagInput" className="form-label fw-bold">Tags:</label>
+          <div className="input-group mb-2">
             <input
               type="text"
               id="tagInput"
+              className="form-control"
               value={currentTag}
               onChange={(e) => setCurrentTag(e.target.value)}
               placeholder="Ex: Urgente, Estudo"
             />
-            <button
-              type="button"
-              onClick={handleAddTag}
-              className="add-tag-button"
-            >
+            <Button variant="outline-secondary" type="button" onClick={handleAddTag}>
               Adicionar Tag
-            </button>
+            </Button>
           </div>
-
           {tags.length > 0 && (
-            <div className="tags-list">
+            <div className="d-flex flex-wrap gap-2 mt-2">
               {tags.map((tag, index) => (
-                <span key={index} className="tag-item">
+                <span key={index} className="badge rounded-pill bg-secondary d-flex align-items-center p-2">
                   {tag}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveTag(tag)}
-                    className="remove-tag-button"
-                  >
-                    &times;
-                  </button>
+                  <Button variant="close" size="sm" onClick={() => handleRemoveTag(tag)} aria-label="Remover tag" className="ms-1"></Button>
                 </span>
               ))}
             </div>
           )}
         </div>
 
-        {/* Campo para Comentários */}
-        <div className="comments-section"
-        >
-          <label>Adicionar Comentários:</label>
-          <div className="comment-input-group">
-            
+        <div className="mb-3 p-3 border rounded bg-white">
+          <label htmlFor="commentText" className="form-label fw-bold">Comentários:</label>
+          <div className="input-group mb-2">
             <textarea
+              id="commentText"
+              className="form-control"
               value={currentCommentText}
               onChange={(e) => setCurrentCommentText(e.target.value)}
               placeholder="Seu comentário..."
               rows={2}
             ></textarea>
-            <button
-              type="button"
-              onClick={handleAddComment}
-              className="add-comment-button"
-            >
+            <Button variant="outline-secondary" type="button" onClick={handleAddComment} disabled={!currentUser}>
               Adicionar Comentário
-            </button>
+            </Button>
           </div>
-
           {comments.length > 0 && (
-            <div className="comments-list-container">
-              <h5>Comentários Adicionados:</h5>
-              <ul className="comments-list">
+            <div className="mt-2">
+              <h6 className="mb-2">Comentários Adicionados:</h6>
+              <ul className="list-group list-group-flush">
                 {comments.map((comment, index) => (
-                  <li key={index} className="comment-item">
-                    <div>
-                      <strong>{comment.autor}</strong>: {comment.comentario}
+                  <li key={comment.id_comentario || index} className="list-group-item d-flex justify-content-between align-items-start px-0 py-2">
+                    <div className="me-auto">
+                      <strong className="d-block">
+                        {comment.id_autor === currentUser?.id_user 
+                          ? currentUser?.username 
+                          : `Autor (${comment.id_autor.substring(0,6)}...)`
+                        }
+                      </strong>
+                      <p className="mb-0 ms-2" style={{whiteSpace: 'pre-wrap'}}>{comment.comentario}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveComment(index)}
-                      className="remove-comment-button"
-                    >
-                      &times;
-                    </button>
+                    <Button variant="link" size="sm" className="text-danger p-0" onClick={() => handleRemoveComment(index)} title="Remover comentário">
+                      <i className="bi bi-x-circle fs-5"></i>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -327,32 +289,24 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
           )}
         </div>
         
-        <div className='d-flex'>
+        <div className="d-flex justify-content-end mt-4">
           {taskToEdit && onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn btn-secondary me-2 ms-2"
-            >
+            <Button variant="light" type="button" onClick={onClose} className="me-2 border">
               Cancelar
-            </button>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="submit-button"
-        >
-          {loading ? (taskToEdit ? 'Atualizando...' : 'Adicionando...') : (taskToEdit ? 'Salvar Alterações' : 'Adicionar Tarefa')}
-        </button>
+            </Button>
+          )}
+          <Button 
+            type="submit" 
+            variant={taskToEdit ? "success" : "primary"} 
+            disabled={loading || !currentUser}
+            className="px-4 py-2"
+          >
+            {loading ? (taskToEdit ? 'Salvando...' : 'Adicionando...') : (taskToEdit ? 'Salvar Alterações' : 'Adicionar Tarefa')}
+          </Button>
         </div>
-        
-
       </form>
-      {error && <p className="error-message">{error}</p>}
-      {success && (
-        <p className="success-message">{success}</p>
-      )}
+      {error && <p className="mt-3 alert alert-danger">{error}</p>}
+      {success && <p className="mt-3 alert alert-success">{success}</p>}
     </div>
   );
 };
