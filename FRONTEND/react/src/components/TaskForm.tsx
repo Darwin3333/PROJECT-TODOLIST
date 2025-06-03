@@ -1,5 +1,5 @@
 // src/components/TaskForm.tsx
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Button } from 'react-bootstrap';
 import type {
@@ -10,7 +10,6 @@ import type {
   Task,
   CommentForDisplay,
 } from '../types/interfaces';
-// REMOVA A LINHA: import './TaskForm.css'; (se ainda existir)
 
 export interface TaskFormProps {
   onTaskAdded?: () => void;
@@ -20,7 +19,13 @@ export interface TaskFormProps {
   taskToEdit?: Task | null;
 }
 
-const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit } : TaskFormProps ) => {
+const TaskForm: React.FC<TaskFormProps> = ({
+  onTaskAdded,
+  onTaskUpdated,
+  onClose,
+  currentUser,
+  taskToEdit,
+}) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
   const [status, setStatus] = useState<TaskToCreatePayload['status']>('pendente');
@@ -43,7 +48,7 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
           id_comentario: comment.id_comentario,
           id_autor: comment.id_autor,
           comentario: comment.comentario,
-          data: comment.data, // Preserva data original (string ISO)
+          data: comment.data,
         })
       );
       setComments(commentsFromTask);
@@ -110,36 +115,31 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
     try {
       let response;
       if (taskToEdit) {
-        // Modo Edição: PUT
         const updatePayload: TaskToUpdatePayload = {
-          // Enviamos todos os campos que podem ser alterados.
-          // O backend pode ter lógica para lidar com campos não alterados se o modelo Pydantic for flexível.
           titulo: titulo,
           descricao: descricao,
           status: status,
           tags: tags,
-          comentarios: comments, // comments já está como CommentForPayload[]
+          comentarios: comments,
         };
         response = await axios.put(
-          `http://localhost:8000/tarefas/${taskToEdit.id}`, // taskToEdit.id é o UUID
+          `http://localhost:8000/tarefas/${taskToEdit.id}`,
           updatePayload,
-          { // Adiciona o params para enviar solicitante_id_user
+          {
             params: {
-              solicitante_id_user: currentUser.id_user // <-- MUDANÇA AQUI
+              solicitante_id_user: currentUser.id_user
             }
           }
         );
         setSuccess(`Tarefa "${response.data.titulo}" atualizada!`);
         if (onTaskUpdated) onTaskUpdated();
       } else {
-        // Modo Criação: POST
         const createPayload: TaskToCreatePayload = {
           titulo,
           descricao,
           status,
           tags,
-          // Para criar, backend espera comentários sem id_comentario e sem data pré-definida
-          comentarios: comments.map(c => ({ 
+          comentarios: comments.map(c => ({
             id_autor: c.id_autor,
             comentario: c.comentario,
           })),
@@ -148,7 +148,6 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
         response = await axios.post('http://localhost:8000/tarefas/', createPayload);
         setSuccess(`Tarefa "${response.data.titulo}" criada!`);
         if (onTaskAdded) onTaskAdded();
-        // Limpa campos somente na criação bem-sucedida
         setTitulo('');
         setDescricao('');
         setStatus('pendente');
@@ -158,13 +157,13 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
         setCurrentCommentText('');
       }
 
-      if (taskToEdit && onClose) { // Fecha o modal de edição após sucesso
-        setTimeout(() => onClose(), 1500); 
+      if (taskToEdit && onClose) {
+        setTimeout(() => onClose(), 1500);
       }
 
     } catch (err: any) {
       if (axios.isAxiosError(err) && err.response) {
-        if (err.response.status === 403) { // Erro de permissão do backend
+        if (err.response.status === 403) {
           setError("Permissão negada: Você não é o dono desta tarefa ou não pode realizar esta ação.");
         } else {
           setError(`Erro: ${err.response.data.detail || err.message}`);
@@ -178,8 +177,6 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
     }
   };
 
-  // O JSX do formulário permanece o mesmo da última versão (com classes Bootstrap)
-  // Apenas certifique-se que os imports e props estão corretos.
   return (
     <div className="p-3 p-md-4 border rounded bg-light shadow-sm">
       <h3 className="mb-4 text-center">{taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}</h3>
@@ -208,47 +205,56 @@ const TaskForm = ({ onTaskAdded, onTaskUpdated, onClose, currentUser, taskToEdit
           ></textarea>
         </div>
 
-        <div className="mb-3">
-          <label htmlFor="status" className="form-label fw-bold">Status:</label>
-          <select
-            id="status"
-            className="form-select"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as TaskToCreatePayload['status'])}
-          >
-            <option value="pendente">Pendente</option>
-            <option value="em andamento">Em Andamento</option>
-            <option value="concluída">Concluída</option>
-          </select>
-        </div>
-
-        <div className="mb-3 p-3 border rounded bg-white">
-          <label htmlFor="tagInput" className="form-label fw-bold">Tags:</label>
-          <div className="input-group mb-2">
-            <input
-              type="text"
-              id="tagInput"
-              className="form-control"
-              value={currentTag}
-              onChange={(e) => setCurrentTag(e.target.value)}
-              placeholder="Ex: Urgente, Estudo"
-            />
-            <Button variant="outline-secondary" type="button" onClick={handleAddTag}>
-              Adicionar Tag
-            </Button>
+        {/* NOVA ESTRUTURA DE LINHA PARA STATUS E TAGS */}
+        <div className="row g-3 mb-3"> {/* g-3 adiciona espaçamento entre as colunas */}
+          <div className="col-md-4"> {/* Ocupa metade da linha em telas médias ou maiores */}
+            <label htmlFor="status" className="form-label fw-bold">Status:</label>
+            <select
+              id="status"
+              className="form-select"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as TaskToCreatePayload['status'])}
+            >
+              <option value="pendente">Pendente</option>
+              <option value="em andamento">Em Andamento</option>
+              <option value="concluída">Concluída</option>
+            </select>
           </div>
-          {tags.length > 0 && (
-            <div className="d-flex flex-wrap gap-2 mt-2">
-              {tags.map((tag, index) => (
-                <span key={index} className="badge rounded-pill bg-secondary d-flex align-items-center p-2">
-                  {tag}
-                  <Button variant="close" size="sm" onClick={() => handleRemoveTag(tag)} aria-label="Remover tag" className="ms-1"></Button>
-                </span>
-              ))}
+          <div className="col-md-8"> {/* Ocupa a outra metade da linha */}
+            {/* Seção de Tags (movida para dentro da coluna) */}
+            {/* Para manter o mesmo visual interno da seção de tags, podemos remover o p-3 border rounded bg-white dela */}
+            <div>
+              <label htmlFor="tagInput" className="form-label fw-bold">Tags:</label>
+              <div className="input-group mb-2">
+                <input
+                  type="text"
+                  id="tagInput"
+                  className="form-control"
+                  value={currentTag}
+                  onChange={(e) => setCurrentTag(e.target.value)}
+                  placeholder="Ex: Urgente, Estudo"
+                />
+                <Button variant="outline-secondary" type="button" onClick={handleAddTag}>
+                  Adicionar Tag
+                </Button>
+              </div>
+              {tags.length > 0 && (
+                <div className="d-flex flex-wrap gap-2 mt-2">
+                  {tags.map((tag, index) => (
+                    <span key={index} className="badge rounded-pill bg-light text-dark d-flex align-items-center p-2 border">
+                      {tag}
+                      <Button variant="close" size="sm" onClick={() => handleRemoveTag(tag)} aria-label="Remover tag" className="ms-1"></Button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
+        {/* FIM DA NOVA ESTRUTURA DE LINHA */}
 
+
+        {/* Seção de Comentários (permanece como antes, ocupando a linha toda) */}
         <div className="mb-3 p-3 border rounded bg-white">
           <label htmlFor="commentText" className="form-label fw-bold">Comentários:</label>
           <div className="input-group mb-2">
