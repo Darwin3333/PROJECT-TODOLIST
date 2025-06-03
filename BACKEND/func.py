@@ -119,47 +119,34 @@ def atualizar_tarefa(task_uuid_param: str, dados_atualizacao: dict, solicitante_
     if not tarefa_antiga:
         print(f"Erro: Tarefa com ID UUID '{task_uuid_param}' não encontrada para atualização.")
         return None 
-    
-    # VERIFICAÇÃO DE PERMISSÃO
+
     if tarefa_antiga.get("user_id") != solicitante_id_user:
         raise PermissionError(f"Usuário '{solicitante_id_user}' não autorizado a editar a tarefa '{task_uuid_param}'.")
 
     campos_protegidos = ['id', '_id', 'data_criacao', 'user_id'] 
     payload_set = {key: value for key, value in dados_atualizacao.items() if key not in campos_protegidos}
     
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc) # Esta já é offset-aware (UTC)
     payload_set["data_atualizacao"] = now_utc
 
-    # Para atualizar_tarefa, a lógica de data dos comentários precisa ser mais robusta,
-    # pois o frontend pode enviar comentários existentes (com suas datas originais como string)
-    # e novos comentários (para os quais o backend gerará a data).
+    # ... (lógica de processamento de comentários como antes) ...
     if "comentarios" in payload_set and isinstance(payload_set["comentarios"], list):
         comentarios_processados_update = []
         ids_comentarios_existentes_na_tarefa_db = {c.get("id_comentario") for c in tarefa_antiga.get("comentarios", []) if c.get("id_comentario")}
-
         for comentario_in in payload_set["comentarios"]:
             id_autor_comentario = comentario_in.get("id_autor")
-            if not id_autor_comentario or not buscar_usuario_por_id_func(id_autor_comentario):
+            if not id_autor_comentario or not buscar_usuario_por_id_func(id_autor_comentario): # Supondo que buscar_usuario_por_id_func existe
                 raise ValueError(f"ID de autor ('{id_autor_comentario}') inválido em um comentário para atualização.")
-
-            id_com_payload = comentario_in.get("id_comentario") # ID do comentário vindo do payload
-            
-            id_com_final = id_com_payload if id_com_payload and id_com_payload in ids_comentarios_existentes_na_tarefa_db else str(uuid.uuid4())
-
-            data_comentario_dt = now_utc # Default para novos comentários ou se a data enviada for inválida
+            id_com_payload = comentario_in.get("id_comentario")
+            id_com_final = id_com_payload if id_com_payload and id_com_payload in ids_comentarios_existentes_na_tarefa_db else str(uuid.uuid4()) # Supondo que uuid está importado
+            data_comentario_dt = now_utc 
             data_comentario_str_payload = comentario_in.get("data")
-
-            if id_com_final == id_com_payload: # Se é um comentário existente
+            if id_com_final == id_com_payload: 
                 if data_comentario_str_payload and isinstance(data_comentario_str_payload, str):
-                    try: # Tenta usar a data enviada pelo frontend (que deve ser a original do comentário)
+                    try: 
                         data_comentario_dt = datetime.fromisoformat(data_comentario_str_payload.replace("Z", "+00:00"))
                     except ValueError:
                         print(f"Aviso: Data de comentário existente ('{data_comentario_str_payload}') é inválida, usando data da atualização da tarefa.")
-                        # Aqui, para um comentário existente cuja data veio inválida, poderíamos buscar a data original do BD
-                        # ou simplesmente usar now_utc. Para simplificar a apresentação, usamos now_utc.
-                # Se data_comentario_str_payload não veio para um comentário existente, pode ser um erro do frontend
-                # ou uma decisão de design. Para simplificar, usaremos now_utc.
-            
             comentarios_processados_update.append({
                 "id_comentario": id_com_final,
                 "id_autor": id_autor_comentario,
@@ -168,31 +155,51 @@ def atualizar_tarefa(task_uuid_param: str, dados_atualizacao: dict, solicitante_
             })
         payload_set["comentarios"] = comentarios_processados_update
     
-    if not payload_set: 
+    if not payload_set and not dados_atualizacao.get("comentarios"): # Se realmente não há nada para setar além da data_atualizacao
         if tarefa_antiga: 
              return colecao_tarefas.update_one({"id": task_uuid_param}, {"$set": {"data_atualizacao": now_utc}})
         return None
-
+    
     result = colecao_tarefas.update_one({"id": task_uuid_param}, {"$set": payload_set})
     
-    # Lógica Redis para métricas (mantida como antes, usando UUIDs para user_id)
     if result and result.matched_count > 0:
         redis_user_segment = str(tarefa_antiga.get("user_id", "anonimo"))
         old_status = tarefa_antiga.get("status", "pendente")
         new_status = payload_set.get("status", old_status)
+
         if old_status != new_status:
-            redis_client.decr(f"user:{redis_user_segment}:tasks:status:{old_status}")
+            redis_client.decr(f"user:{redis_user_segment}:tasks:status:{old_status}") # Supondo que redis_client está definido
             redis_client.incr(f"user:{redis_user_segment}:tasks:status:{new_status}")
+            
             if new_status == 'concluída':
                 today_key_str = now_utc.strftime("%Y-%m-%d")
                 redis_client.incr(f"user:{redis_user_segment}:tasks:completed:{today_key_str}")
-                redis_client.expire(f"user:{redis_user_segment}:tasks:completed:{today_key_str}", 86400 * 60)
+                redis_client.expire(f"user:{redis_user_segment}:tasks:completed:{today_key_str}", 86400 * 60) 
+
+                data_criacao_tarefa_db = tarefa_antiga.get("data_criacao")
+                
+                # --- 👇 CORREÇÃO APLICADA AQUI 👇 ---
+                if isinstance(data_criacao_tarefa_db, datetime):
+                    # Garante que a data de criação vinda do DB seja offset-aware (UTC)
+                    data_criacao_tarefa_aware = data_criacao_tarefa_db.replace(tzinfo=timezone.utc)
+                    
+                    # now_utc já é offset-aware
+                    duracao = now_utc - data_criacao_tarefa_aware # Agora ambas são offset-aware
+                    duracao_em_segundos = duracao.total_seconds()
+                    
+                    if duracao_em_segundos >= 0: 
+                        redis_client.incrbyfloat(f"user:{redis_user_segment}:stats:total_completion_time_seconds", duracao_em_segundos)
+                        redis_client.incr(f"user:{redis_user_segment}:stats:total_completed_tasks_count")
+                # --- 👆 FIM DA CORREÇÃO 👆 ---
+            
+        # ... (lógica de atualização de tags como antes) ...
         old_tags = set(tarefa_antiga.get("tags", []))
-        new_tags = set(payload_set.get("tags", old_tags if "tags" in payload_set else []))
+        new_tags = set(payload_set.get("tags", old_tags if "tags" in payload_set else [])) # Correção aqui também
         tags_removed = old_tags - new_tags
         tags_added = new_tags - old_tags
         for tag in tags_removed: redis_client.zincrby(f"user:{redis_user_segment}:tags:top", -1, tag)
         for tag in tags_added: redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
+        
     return result
 
 def adicionar_tag_a_tarefa(task_uuid_param: str, tag_nova: str, solicitante_id_user: str):
@@ -268,33 +275,61 @@ def adicionar_comentario(task_uuid_param: str, id_autor_param: str, comentario_t
         {"$push": {"comentarios": novo_comentario_doc}, "$set": {"data_atualizacao": now_utc}}
     )
 
-def _reset_redis_metrics():
-    print("DEBUG RESET: Resetando métricas Redis...")
-    for key_pattern in ["user:*:tasks:*", "user:*:stats:*", "user:*:tags:top"]:
-        for key in redis_client.scan_iter(key_pattern): 
-            redis_client.delete(key)
-    print("DEBUG RESET: Métricas Redis resetadas.")
+# --- Funções de Métricas Redis ---
 
-def _recalculate_redis_metrics():
-    print("Iniciando recalculo das métricas Redis a partir do MongoDB...")
-    _reset_redis_metrics()
-    all_tasks_db = colecao_tarefas.find({})
-    for task_db in all_tasks_db:
-        redis_user_segment = str(task_db.get("user_id", "anonimo_recalc")) 
-        status = task_db.get("status", "pendente")
-        redis_client.incr(f"user:{redis_user_segment}:tasks:status:{status}")
-        data_criacao_dt = task_db.get("data_criacao")
-        if isinstance(data_criacao_dt, datetime):
-            creation_date_str = data_criacao_dt.strftime("%Y-%m-%d")
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            if creation_date_str == today_str:
-                redis_client.incr(f"user:{redis_user_segment}:tasks:created_today:{today_str}")
-        tags_da_tarefa = task_db.get("tags", [])
-        for tag in tags_da_tarefa:
-            redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
-        if status == 'concluída':
-            data_relevante_para_conclusao = task_db.get("data_atualizacao") 
-            if isinstance(data_relevante_para_conclusao, datetime):
-                completed_date_str = data_relevante_para_conclusao.strftime("%Y-%m-%d")
-                redis_client.incr(f"user:{redis_user_segment}:tasks:completed:{completed_date_str}")
-    print("Recalculo das métricas Redis concluído.")
+# def _reset_redis_metrics():
+#     print("DEBUG RESET: Resetando métricas Redis...")
+#     # Adicionado 'user:*:stats:*' para limpar as novas chaves de estatísticas
+#     for key_pattern in ["user:*:tasks:*", "user:*:stats:*", "user:*:tags:top"]: 
+#         for key in redis_client.scan_iter(key_pattern): 
+#             redis_client.delete(key)
+#     print("DEBUG RESET: Métricas Redis resetadas.")
+
+
+# def _recalculate_redis_metrics():
+#     print("Iniciando recalculo das métricas Redis a partir do MongoDB...")
+#     _reset_redis_metrics() # Esta chamada também não ocorreria
+
+#     all_tasks_db = colecao_tarefas.find({})
+#     for task_db in all_tasks_db:
+#         redis_user_segment = str(task_db.get("user_id", "anonimo_recalc")) 
+#         status = task_db.get("status", "pendente")
+
+#         # Métrica: Contadores de Status de Tarefas
+#         redis_client.incr(f"user:{redis_user_segment}:tasks:status:{status}")
+
+#         # Métrica: Tarefas Criadas Hoje
+#         data_criacao_dt = task_db.get("data_criacao")
+#         if isinstance(data_criacao_dt, datetime):
+#             creation_date_str = data_criacao_dt.strftime("%Y-%m-%d")
+#             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+#             if creation_date_str == today_str: 
+#                 redis_client.incr(f"user:{redis_user_segment}:tasks:created_today:{creation_date_str}")
+        
+#         # Métrica: Tags Mais Utilizadas
+#         tags_da_tarefa = task_db.get("tags", [])
+#         for tag in tags_da_tarefa:
+#             redis_client.zincrby(f"user:{redis_user_segment}:tags:top", 1, tag)
+        
+#         # Métrica: Tarefas Concluídas por Dia E Estatísticas de Tempo de Conclusão
+#         if status == 'concluída':
+#             data_conclusao_dt = task_db.get("data_atualizacao") 
+            
+#             if isinstance(data_conclusao_dt, datetime):
+#                 completed_date_str = data_conclusao_dt.strftime("%Y-%m-%d")
+#                 redis_client.incr(f"user:{redis_user_segment}:tasks:completed:{completed_date_str}")
+
+#                 if isinstance(data_criacao_dt, datetime): 
+#                     duracao = data_conclusao_dt - data_criacao_dt
+#                     duracao_em_segundos = duracao.total_seconds()
+                    
+#                     if duracao_em_segundos >= 0: 
+#                         redis_client.incrbyfloat(
+#                             f"user:{redis_user_segment}:stats:total_completion_time_seconds", 
+#                             duracao_em_segundos
+#                         )
+#                         redis_client.incr(
+#                             f"user:{redis_user_segment}:stats:total_completed_tasks_count"
+#                         )
+                        
+#     print("Recalculo das métricas Redis concluído.")

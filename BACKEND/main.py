@@ -101,21 +101,36 @@ class CompletedByDayItem(APIBaseModel): # ou apenas BaseModel
     date: str # A data já é uma string "AAAA-MM-DD"
     count: int
 
+class AverageCompletionTime(APIBaseModel): # Ou apenas BaseModel
+    average_seconds: Optional[float] = None # Em segundos
+    total_completed: int
+    message: Optional[str] = None # Para casos como "Nenhuma tarefa concluída ainda"
+
+class WeeklyCompletionRate(APIBaseModel): # Ou apenas BaseModel
+    rate: Optional[float] = None # Ex: 0.75 para 75%
+    tasks_created_last_7_days: int
+    tasks_completed_last_7_days: int
+    message: Optional[str] = None # Para casos como "Nenhuma tarefa criada na última semana"
+
 # --- Evento de Startup ---
 @app.on_event("startup")
 async def startup_event():
     try:
         redis_client.ping()
         print("Conexão com Redis estabelecida com sucesso!")
-        print("Iniciando recálculo de métricas Redis no startup...")
-        func._recalculate_redis_metrics() 
-        print("Recálculo de métricas Redis concluído.")
+
+        # Comente as linhas abaixo para desabilitar o recálculo no startup
+        # print("Iniciando recálculo de métricas Redis no startup...")
+        # func._recalculate_redis_metrics() 
+        # print("Recálculo de métricas Redis concluído.")
+        # print("Recálculo de métricas no startup está DESABILITADO.")
+
     except redis.exceptions.ConnectionError as e:
         print(f"ERRO FATAL: Não foi possível conectar ao Redis. {e}")
         # Em um cenário real, você pode querer que a aplicação não inicie.
         # raise Exception("Falha ao conectar ao Redis.") 
-    except Exception as e_recalc:
-        print(f"ERRO durante o recálculo de métricas no startup: {e_recalc}")
+    # except Exception as e_recalc:
+    #     print(f"ERRO durante o recálculo de métricas no startup: {e_recalc}")
 
 # --- Rotas de Usuário ---
 
@@ -227,62 +242,106 @@ async def obter_tarefa_por_id_rota(task_uuid_param: str):
         raise HTTPException(status_code=500, detail=f"Erro interno ao obter tarefa: {str(e)}")
 
 @app.put("/tarefas/{task_uuid_param}", response_model=TarefaInDB, summary="Atualizar tarefa existente")
-async def atualizar_tarefa_existente_rota(task_uuid_param: str, tarefa_update_payload: TarefaUpdatePayload, solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição")):
+async def atualizar_tarefa_existente_rota(
+    task_uuid_param: str,
+    tarefa_update_payload: TarefaUpdatePayload,
+    solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição") # Este parâmetro é crucial
+):
     try:
-        # Valida se o usuário solicitante existe (boa prática)
+        # Validação opcional do solicitante (boa prática)
         if not func.buscar_usuario_por_id_func(solicitante_id_user):
             raise HTTPException(status_code=404, detail=f"Usuário solicitante com ID '{solicitante_id_user}' não encontrado.")
 
-        dados_para_atualizar = tarefa_update_payload.model_dump(exclude_unset=True) # Apenas campos enviados
-        if not dados_para_atualizar: # Se nada foi enviado para atualizar
-            # Busca a tarefa apenas para forçar a atualização de data_atualizacao e retornar
-            tarefa_existente = func.buscar_tarefa_por_id_func(task_uuid_param)
-            if not tarefa_existente:
+        dados_para_atualizar = tarefa_update_payload.model_dump(exclude_unset=True)
+        
+        # Lógica para quando o payload de atualização está vazio (apenas para atualizar data_atualizacao)
+        if not dados_para_atualizar and not tarefa_update_payload.comentarios: # Ajuste na condição
+            tarefa_existente_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+            if not tarefa_existente_dict:
                  raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
-            # Chama atualizar_tarefa mesmo com payload vazio para atualizar data_atualizacao
-            func.atualizar_tarefa(task_uuid_param, {}) 
-            tarefa_rebuscada = func.buscar_tarefa_por_id_func(task_uuid_param) # Rebusca para pegar data_atualizacao nova
-            if tarefa_rebuscada: return TarefaInDB(**tarefa_rebuscada)
+            
+            # Chama atualizar_tarefa passando o solicitante_id_user
+            func.atualizar_tarefa(task_uuid_param, {}, solicitante_id_user) # <--- PONTO IMPORTANTE
+            
+            tarefa_rebuscada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+            if tarefa_rebuscada_dict: return TarefaInDB(**tarefa_rebuscada_dict)
             raise HTTPException(status_code=500, detail="Erro ao rebuscar tarefa após atualização mínima.")
 
-
-        resultado_update = func.atualizar_tarefa(task_uuid_param, dados_para_atualizar)
+        # Chamada principal para atualizar_tarefa
+        resultado_update = func.atualizar_tarefa(
+            task_uuid_param, 
+            dados_para_atualizar, 
+            solicitante_id_user # <--- PASSANDO O ARGUMENTO AQUI
+        )
         
-        if resultado_update and resultado_update.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Tarefa não encontrada para atualização.")
+        if resultado_update is None:
+             raise HTTPException(status_code=404, detail="Tarefa não encontrada para atualização (retorno None de func).")
+        if resultado_update.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada para atualização (match count 0).")
 
-        if resultado_update: # Inclui modified_count >= 0 (mesmo que só data_atualizacao mude)
-            tarefa_atualizada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
-            if tarefa_atualizada_dict:
-                return TarefaInDB(**tarefa_atualizada_dict)
-            raise HTTPException(status_code=500, detail="Tarefa alterada, mas não pôde ser recuperada.")
-        
-        raise HTTPException(status_code=400, detail="Erro ao atualizar tarefa ou tarefa não foi modificada.")
+        tarefa_atualizada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
+        if tarefa_atualizada_dict:
+            return TarefaInDB(**tarefa_atualizada_dict)
+        raise HTTPException(status_code=500, detail="Tarefa alterada, mas não pôde ser recuperada.")
+
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
+        import traceback # Adicione no topo do arquivo se não estiver
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erro interno ao atualizar tarefa: {str(e)}")
 
 @app.delete("/tarefas/{task_uuid_param}", status_code=204, summary="Deletar tarefa") 
-async def deletar_tarefa_rota(task_uuid_param: str, solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição")):
+async def deletar_tarefa_rota(
+    task_uuid_param: str,
+    solicitante_id_user: str = Query(..., description="ID (UUID) do usuário que está fazendo a requisição") # Parâmetro de query
+):
     try:
+        # Validação opcional do solicitante (boa prática)
         if not func.buscar_usuario_por_id_func(solicitante_id_user):
             raise HTTPException(status_code=404, detail=f"Usuário solicitante com ID '{solicitante_id_user}' não encontrado.")
 
-        resultado_delete = func.deletar_tarefa(task_uuid_param)
-        if resultado_delete and resultado_delete.deleted_count == 1:
-            return None # FastAPI não envia corpo para 204
+        # Passa o solicitante_id_user para a função do backend
+        resultado_delete = func.deletar_tarefa(task_uuid_param, solicitante_id_user) 
         
-        # Se resultado_delete for None (erro em func) ou deleted_count == 0
-        tarefa_existe = func.buscar_tarefa_por_id_func(task_uuid_param)
-        if not tarefa_existe:
-             raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
-        else: # Existe mas não foi deletada
-             raise HTTPException(status_code=500, detail="Erro ao deletar tarefa (tarefa não foi deletada).")
-    except HTTPException as http_exc:
+        if resultado_delete is None: 
+            # Isso acontece se func.deletar_tarefa retornou None (tarefa não encontrada antes da verificação de permissão)
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada para deleção.")
+        
+        if resultado_delete.deleted_count == 0:
+            # Se chegou aqui, a tarefa existia, a permissão foi verificada (ou deveria ter sido),
+            # mas a operação de delete não afetou nenhum documento.
+            # Isso pode acontecer se a tarefa foi deletada por outra requisição entre a busca e o delete,
+            # ou se a verificação de permissão em func.deletar_tarefa não levantou exceção mas impediu o delete.
+            # Para ser mais robusto, verificamos se a tarefa ainda existe.
+            if func.buscar_tarefa_por_id_func(task_uuid_param):
+                 # Se a tarefa ainda existe, pode ter sido um erro de permissão não capturado como exceção
+                 # ou uma condição de corrida.
+                 # Se func.deletar_tarefa levanta PermissionError corretamente, este caso é menos provável.
+                raise HTTPException(status_code=403, detail="Não foi possível deletar a tarefa. Verifique as permissões ou se a tarefa ainda existe.")
+            else:
+                # A tarefa não existe mais, então a deleção pode ser considerada "bem-sucedida" no sentido de que o estado final é o desejado.
+                # No entanto, o deleted_count foi 0, o que é estranho se ela existia antes.
+                # Para um 204, é melhor garantir que houve uma deleção.
+                # Se a tarefa já não existia, um 404 seria mais apropriado.
+                # Como func.deletar_tarefa já verifica se a tarefa existe e levanta PermissionError,
+                # um deleted_count == 0 aqui, após um resultado_delete não nulo, é um cenário incomum.
+                # Vamos assumir que se resultado_delete não é None e deleted_count é 0, a tarefa não foi encontrada
+                # ou a permissão falhou de uma forma que não levantou exceção (o que não deveria acontecer com o PermissionError).
+                raise HTTPException(status_code=404, detail="Tarefa não encontrada ou não pôde ser deletada.")
+
+
+        # Se deleted_count == 1, sucesso, retorna 204 (No Content)
+        # FastAPI lida com o retorno None para status 204 automaticamente.
+        return None 
+
+    except PermissionError as pe: # Captura o erro de permissão de func.deletar_tarefa
+        raise HTTPException(status_code=403, detail=str(pe))
+    except HTTPException as http_exc: # Re-levanta HTTPExceptions já tratadas
         raise http_exc
     except Exception as e:
         traceback.print_exc()
@@ -372,3 +431,66 @@ async def get_completed_tasks_by_day_metrics(user_id: str = Query(..., descripti
         count = redis_client.get(key)
         completed_by_day.append({"date": date_key_str, "count": int(count) if count else 0})
     return list(reversed(completed_by_day))
+
+# --- NOVAS ROTAS DE MÉTRICAS ---
+
+@app.get("/metrics/average-completion-time", response_model=AverageCompletionTime, summary="Tempo médio de conclusão de tarefas para um utilizador")
+async def get_average_completion_time_metrics(user_id: str = Query(..., description="ID (UUID) do utilizador")):
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Utilizador com ID '{user_id}' não encontrado.")
+
+    total_time_str = redis_client.get(f"user:{user_id}:stats:total_completion_time_seconds")
+    total_completed_str = redis_client.get(f"user:{user_id}:stats:total_completed_tasks_count")
+
+    total_time = float(total_time_str) if total_time_str else 0.0
+    total_completed = int(total_completed_str) if total_completed_str else 0
+
+    if total_completed == 0:
+        return AverageCompletionTime(
+            average_seconds=None, 
+            total_completed=0,
+            message="Nenhuma tarefa foi concluída ainda."
+        )
+    
+    average_seconds = total_time / total_completed
+    return AverageCompletionTime(
+        average_seconds=average_seconds,
+        total_completed=total_completed
+    )
+
+@app.get("/metrics/weekly-completion-rate", response_model=WeeklyCompletionRate, summary="Taxa de conclusão semanal de tarefas para um utilizador")
+async def get_weekly_completion_rate_metrics(user_id: str = Query(..., description="ID (UUID) do utilizador")):
+    if not func.buscar_usuario_por_id_func(user_id):
+        raise HTTPException(status_code=404, detail=f"Utilizador com ID '{user_id}' não encontrado.")
+
+    tasks_created_last_7_days = 0
+    tasks_completed_last_7_days = 0
+    today = datetime.now(timezone.utc).date() # Apenas a data, sem a hora
+
+    for i in range(7): # Hoje e os 6 dias anteriores
+        current_eval_date = today - timedelta(days=i)
+        date_key_str = current_eval_date.strftime("%Y-%m-%d")
+        
+        # Tarefas criadas no dia
+        created_count_str = redis_client.get(f"user:{user_id}:tasks:created_today:{date_key_str}")
+        tasks_created_last_7_days += int(created_count_str) if created_count_str else 0
+        
+        # Tarefas concluídas no dia
+        completed_count_str = redis_client.get(f"user:{user_id}:tasks:completed:{date_key_str}")
+        tasks_completed_last_7_days += int(completed_count_str) if completed_count_str else 0
+
+    if tasks_created_last_7_days == 0:
+        return WeeklyCompletionRate(
+            rate=None,
+            tasks_created_last_7_days=0,
+            tasks_completed_last_7_days=tasks_completed_last_7_days,
+            message="Nenhuma tarefa criada na última semana para calcular a taxa."
+        )
+        
+    completion_rate = (tasks_completed_last_7_days / tasks_created_last_7_days) if tasks_created_last_7_days > 0 else 0.0
+    
+    return WeeklyCompletionRate(
+        rate=completion_rate,
+        tasks_created_last_7_days=tasks_created_last_7_days,
+        tasks_completed_last_7_days=tasks_completed_last_7_days
+    )
