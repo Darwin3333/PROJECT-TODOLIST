@@ -75,7 +75,7 @@ const CustomNavbar = ({ currentUser, onLogin, onLogout } : CustomNavbarProps) =>
                 title={
                   <>
                     <i className="bi bi-box-arrow-in-right me-1"></i> {/* Ícone Opcional */}
-                    Login (Teste)
+                    Login
                   </>
                 } 
                 id="login-nav-dropdown" 
