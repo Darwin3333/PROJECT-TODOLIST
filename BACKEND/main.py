@@ -348,18 +348,23 @@ async def deletar_tarefa_rota(
         raise HTTPException(status_code=500, detail=f"Erro interno ao deletar tarefa: {str(e)}")
 
 @app.post("/tarefas/{task_uuid_param}/comentarios/", response_model=TarefaInDB, status_code=201, summary="Adicionar comentário a uma tarefa")
-async def adicionar_comentario_rota(task_uuid_param: str, comentario_payload: ComentarioCreateInTask, current_user_id: str = Query(..., description="ID do usuário logado que está comentando")):
-    # Em um sistema real, current_user_id viria de um token de autenticação (ex: Depends(get_current_user))
-    # Para a apresentação, passamos como query parameter ou assumimos que já está no comentario_payload.
-    # Vou assumir que o comentario_payload já tem id_autor, conforme ComentarioCreateInTask.
+async def adicionar_comentario_rota(
+    task_uuid_param: str, 
+    comentario_payload: ComentarioCreateInTask # Apenas o payload do comentário no corpo
+    # current_user_id: str = Query(..., description="ID do utilizador logado que está a comentar") # REMOVA OU COMENTE ESTA LINHA
+):
     try:
-        # Validar se o id_autor do comentário corresponde ao usuário "logado" (se essa lógica for necessária)
-        # ou se o id_autor no payload é confiável.
-        # Para este exemplo, confiamos no id_autor do payload.
+        # A validação do id_autor agora usa o que vem no payload
+        if not comentario_payload.id_autor: # Adiciona uma verificação se id_autor está presente no payload
+             raise HTTPException(status_code=400, detail="ID do autor é obrigatório no corpo do comentário.")
         if not func.buscar_usuario_por_id_func(comentario_payload.id_autor):
              raise HTTPException(status_code=400, detail=f"ID de autor '{comentario_payload.id_autor}' inválido.")
 
-        resultado_add = func.adicionar_comentario(task_uuid_param, comentario_payload.id_autor, comentario_payload.comentario)
+        resultado_add = func.adicionar_comentario(
+            task_uuid_param, 
+            comentario_payload.id_autor, # Usa id_autor do payload
+            comentario_payload.comentario # Usa comentario do payload
+        )
         
         if resultado_add and resultado_add.modified_count == 1:
             tarefa_atualizada_dict = func.buscar_tarefa_por_id_func(task_uuid_param)
@@ -367,14 +372,16 @@ async def adicionar_comentario_rota(task_uuid_param: str, comentario_payload: Co
                 return TarefaInDB(**tarefa_atualizada_dict)
             raise HTTPException(status_code=500, detail="Comentário adicionado, mas tarefa não pôde ser recuperada.")
         
+        # Se não modificou, pode ser que a tarefa não exista
         tarefa_existe = func.buscar_tarefa_por_id_func(task_uuid_param)
         if not tarefa_existe:
             raise HTTPException(status_code=404, detail="Tarefa não encontrada para adicionar comentário.")
-        else:
+        else: # Tarefa existe mas não foi modificada (pode ser um erro interno em func.adicionar_comentario)
             raise HTTPException(status_code=400, detail="Erro ao adicionar comentário ou tarefa não foi modificada.")
-    except ValueError as ve:
+
+    except ValueError as ve: # Captura ValueError de func.adicionar_comentario
         raise HTTPException(status_code=400, detail=str(ve))
-    except HTTPException as http_exc:
+    except HTTPException as http_exc: # Re-levanta HTTPExceptions já tratadas
         raise http_exc
     except Exception as e:
         traceback.print_exc()
