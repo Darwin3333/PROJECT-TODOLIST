@@ -2,7 +2,6 @@ from conexao import colecao_tarefas, colecao_usuarios, redis_client
 from datetime import datetime, timezone
 import uuid
 
-
 # --- Funções de Usuário ---
 def criar_usuario_func(username: str, password_plaintext: str) -> str:
     if colecao_usuarios.find_one({"username": username}):
