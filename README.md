@@ -2,7 +2,8 @@ TodoList 📝
 
 O TodoList é um aplicativo web completo para gerenciamento de tarefas. Ele permite que usuários se autentiquem e, a partir daí, possam criar, visualizar, atualizar e deletar suas próprias tarefas. O sistema também conta com um recurso de comentários, permitindo a interação entre usuários nas tarefas.
 
-Um dos principais diferenciais é o dashboard interativo que, utilizando Redis, exibe métricas em tempo real sobre a produtividade, como a quantidade total de tarefas criadas, as tags mais utilizadas e um balanço de tarefas concluídas vs. em andamento.
+Um dos principais diferenciais é o dashboard interativo que, utilizando Redis, exibe métricas em tempo real sobre a produtividade, como a quantidade total de tarefas criadas, as tags mais utilizadas e um balanço de tarefas concluídas vs. em andamento. 
+
 ✨ Funcionalidades
 
     Autenticação de Usuários: Sistema de login para acesso seguro e personalizado.
