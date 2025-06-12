@@ -28,7 +28,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
 }) => {
   const [titulo, setTitulo] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
-  const [status, setStatus] = useState<TaskToCreatePayload['status']>('pendente');
+  const [status, setStatus] =
+    useState<TaskToCreatePayload['status']>('pendente');
   const [currentTag, setCurrentTag] = useState<string>('');
   const [tags, setTags] = useState<string[]>([]);
   const [currentCommentText, setCurrentCommentText] = useState<string>('');
@@ -43,14 +44,14 @@ const TaskForm: React.FC<TaskFormProps> = ({
       setDescricao(taskToEdit.descricao);
       setStatus(taskToEdit.status);
       setTags(taskToEdit.tags || []);
-      const commentsFromTask: CommentForPayload[] = (taskToEdit.comentarios || []).map(
-        (comment: CommentForDisplay) => ({
-          id_comentario: comment.id_comentario,
-          id_autor: comment.id_autor,
-          comentario: comment.comentario,
-          data: comment.data,
-        })
-      );
+      const commentsFromTask: CommentForPayload[] = (
+        taskToEdit.comentarios || []
+      ).map((comment: CommentForDisplay) => ({
+        id_comentario: comment.id_comentario,
+        id_autor: comment.id_autor,
+        comentario: comment.comentario,
+        data: comment.data,
+      }));
       setComments(commentsFromTask);
       setError(null);
       setSuccess(null);
@@ -80,7 +81,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
 
   const handleAddComment = () => {
     if (!currentUser || !currentUser.id_user) {
-      setError("Você precisa estar logado para adicionar um comentário.");
+      setError('Você precisa estar logado para adicionar um comentário.');
       return;
     }
     if (currentCommentText.trim()) {
@@ -92,7 +93,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
       setCurrentCommentText('');
       setError(null);
     } else {
-      setError("O comentário não pode ser vazio.");
+      setError('O comentário não pode ser vazio.');
     }
   };
 
@@ -107,7 +108,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
     setSuccess(null);
 
     if (!currentUser || !currentUser.id_user) {
-      setError("Por favor, faça login para realizar esta ação.");
+      setError('Por favor, faça login para realizar esta ação.');
       setLoading(false);
       return;
     }
@@ -127,8 +128,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
           updatePayload,
           {
             params: {
-              solicitante_id_user: currentUser.id_user
-            }
+              solicitante_id_user: currentUser.id_user,
+            },
           }
         );
         setSuccess(`Tarefa "${response.data.titulo}" atualizada!`);
@@ -139,13 +140,16 @@ const TaskForm: React.FC<TaskFormProps> = ({
           descricao,
           status,
           tags,
-          comentarios: comments.map(c => ({
+          comentarios: comments.map((c) => ({
             id_autor: c.id_autor,
             comentario: c.comentario,
           })),
           user_id: currentUser.id_user,
         };
-        response = await axios.post('http://localhost:8000/tarefas/', createPayload);
+        response = await axios.post(
+          'http://localhost:8000/tarefas/',
+          createPayload
+        );
         setSuccess(`Tarefa "${response.data.titulo}" criada!`);
         if (onTaskAdded) onTaskAdded();
         setTitulo('');
@@ -160,18 +164,19 @@ const TaskForm: React.FC<TaskFormProps> = ({
       if (taskToEdit && onClose) {
         setTimeout(() => onClose(), 1500);
       }
-
     } catch (err: any) {
       if (axios.isAxiosError(err) && err.response) {
         if (err.response.status === 403) {
-          setError("Permissão negada: Você não é o dono desta tarefa ou não pode realizar esta ação.");
+          setError(
+            'Permissão negada: Você não é o dono desta tarefa ou não pode realizar esta ação.'
+          );
         } else {
           setError(`Erro: ${err.response.data.detail || err.message}`);
         }
       } else {
         setError(`Erro desconhecido: ${err.message}`);
       }
-      console.error("Erro no handleSubmit do TaskForm:", err);
+      console.error('Erro no handleSubmit do TaskForm:', err);
     } finally {
       setLoading(false);
     }
@@ -179,10 +184,14 @@ const TaskForm: React.FC<TaskFormProps> = ({
 
   return (
     <div className="p-3 p-md-4 border rounded bg-light shadow-sm">
-      <h3 className="mb-4 text-center">{taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}</h3>
+      <h3 className="mb-4 text-center">
+        {taskToEdit ? 'Editar Tarefa' : 'Adicionar Nova Tarefa'}
+      </h3>
       <form onSubmit={handleSubmit}>
         <div className="mb-3">
-          <label htmlFor="titulo" className="form-label fw-bold">Título:</label>
+          <label htmlFor="titulo" className="form-label fw-bold">
+            Título:
+          </label>
           <input
             type="text"
             id="titulo"
@@ -194,7 +203,9 @@ const TaskForm: React.FC<TaskFormProps> = ({
         </div>
 
         <div className="mb-3">
-          <label htmlFor="descricao" className="form-label fw-bold">Descrição:</label>
+          <label htmlFor="descricao" className="form-label fw-bold">
+            Descrição:
+          </label>
           <textarea
             id="descricao"
             className="form-control"
@@ -205,26 +216,29 @@ const TaskForm: React.FC<TaskFormProps> = ({
           ></textarea>
         </div>
 
-        {/* NOVA ESTRUTURA DE LINHA PARA STATUS E TAGS */}
-        <div className="row g-3 mb-3"> {/* g-3 adiciona espaçamento entre as colunas */}
-          <div className="col-md-4"> {/* Ocupa metade da linha em telas médias ou maiores */}
-            <label htmlFor="status" className="form-label fw-bold">Status:</label>
+        <div className="row g-3 mb-3">
+          <div className="col-md-4">
+            <label htmlFor="status" className="form-label fw-bold">
+              Status:
+            </label>
             <select
               id="status"
               className="form-select"
               value={status}
-              onChange={(e) => setStatus(e.target.value as TaskToCreatePayload['status'])}
+              onChange={(e) =>
+                setStatus(e.target.value as TaskToCreatePayload['status'])
+              }
             >
               <option value="pendente">Pendente</option>
               <option value="em andamento">Em Andamento</option>
               <option value="concluída">Concluída</option>
             </select>
           </div>
-          <div className="col-md-8"> {/* Ocupa a outra metade da linha */}
-            {/* Seção de Tags (movida para dentro da coluna) */}
-            {/* Para manter o mesmo visual interno da seção de tags, podemos remover o p-3 border rounded bg-white dela */}
+          <div className="col-md-8">
             <div>
-              <label htmlFor="tagInput" className="form-label fw-bold">Tags:</label>
+              <label htmlFor="tagInput" className="form-label fw-bold">
+                Tags:
+              </label>
               <div className="input-group mb-2">
                 <input
                   type="text"
@@ -234,16 +248,29 @@ const TaskForm: React.FC<TaskFormProps> = ({
                   onChange={(e) => setCurrentTag(e.target.value)}
                   placeholder="Ex: Urgente, Estudo"
                 />
-                <Button variant="outline-secondary" type="button" onClick={handleAddTag}>
+                <Button
+                  variant="outline-secondary"
+                  type="button"
+                  onClick={handleAddTag}
+                >
                   Adicionar Tag
                 </Button>
               </div>
               {tags.length > 0 && (
                 <div className="d-flex flex-wrap gap-2 mt-2">
                   {tags.map((tag, index) => (
-                    <span key={index} className="badge rounded-pill bg-light text-dark d-flex align-items-center p-2 border">
+                    <span
+                      key={index}
+                      className="badge rounded-pill bg-light text-dark d-flex align-items-center p-2 border"
+                    >
                       {tag}
-                      <Button variant="close" size="sm" onClick={() => handleRemoveTag(tag)} aria-label="Remover tag" className="ms-1"></Button>
+                      <Button
+                        variant="close"
+                        size="sm"
+                        onClick={() => handleRemoveTag(tag)}
+                        aria-label="Remover tag"
+                        className="ms-1"
+                      ></Button>
                     </span>
                   ))}
                 </div>
@@ -251,12 +278,11 @@ const TaskForm: React.FC<TaskFormProps> = ({
             </div>
           </div>
         </div>
-        {/* FIM DA NOVA ESTRUTURA DE LINHA */}
 
-
-        {/* Seção de Comentários (permanece como antes, ocupando a linha toda) */}
         <div className="mb-3 p-3 border rounded bg-white">
-          <label htmlFor="commentText" className="form-label fw-bold">Comentários:</label>
+          <label htmlFor="commentText" className="form-label fw-bold">
+            Comentários:
+          </label>
           <div className="input-group mb-2">
             <textarea
               id="commentText"
@@ -266,7 +292,12 @@ const TaskForm: React.FC<TaskFormProps> = ({
               placeholder="Seu comentário..."
               rows={2}
             ></textarea>
-            <Button variant="outline-secondary" type="button" onClick={handleAddComment} disabled={!currentUser}>
+            <Button
+              variant="outline-secondary"
+              type="button"
+              onClick={handleAddComment}
+              disabled={!currentUser}
+            >
               Adicionar Comentário
             </Button>
           </div>
@@ -275,17 +306,30 @@ const TaskForm: React.FC<TaskFormProps> = ({
               <h6 className="mb-2">Comentários Adicionados:</h6>
               <ul className="list-group list-group-flush">
                 {comments.map((comment, index) => (
-                  <li key={comment.id_comentario || index} className="list-group-item d-flex justify-content-between align-items-start px-0 py-2">
+                  <li
+                    key={comment.id_comentario || index}
+                    className="list-group-item d-flex justify-content-between align-items-start px-0 py-2"
+                  >
                     <div className="me-auto">
                       <strong className="d-block">
-                        {comment.id_autor === currentUser?.id_user 
-                          ? currentUser?.username 
-                          : `Autor (${comment.id_autor.substring(0,6)}...)`
-                        }
+                        {comment.id_autor === currentUser?.id_user
+                          ? currentUser?.username
+                          : `Autor (${comment.id_autor.substring(0, 6)}...)`}
                       </strong>
-                      <p className="mb-0 ms-2" style={{whiteSpace: 'pre-wrap'}}>{comment.comentario}</p>
+                      <p
+                        className="mb-0 ms-2"
+                        style={{ whiteSpace: 'pre-wrap' }}
+                      >
+                        {comment.comentario}
+                      </p>
                     </div>
-                    <Button variant="link" size="sm" className="text-danger p-0" onClick={() => handleRemoveComment(index)} title="Remover comentário">
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="text-danger p-0"
+                      onClick={() => handleRemoveComment(index)}
+                      title="Remover comentário"
+                    >
                       <i className="bi bi-x-circle fs-5"></i>
                     </Button>
                   </li>
@@ -294,20 +338,31 @@ const TaskForm: React.FC<TaskFormProps> = ({
             </div>
           )}
         </div>
-        
+
         <div className="d-flex justify-content-end mt-4">
           {taskToEdit && onClose && (
-            <Button variant="light" type="button" onClick={onClose} className="me-2 border">
+            <Button
+              variant="light"
+              type="button"
+              onClick={onClose}
+              className="me-2 border"
+            >
               Cancelar
             </Button>
           )}
-          <Button 
-            type="submit" 
-            variant={taskToEdit ? "success" : "primary"} 
+          <Button
+            type="submit"
+            variant={taskToEdit ? 'success' : 'primary'}
             disabled={loading || !currentUser}
             className="px-4 py-2"
           >
-            {loading ? (taskToEdit ? 'Salvando...' : 'Adicionando...') : (taskToEdit ? 'Salvar Alterações' : 'Adicionar Tarefa')}
+            {loading
+              ? taskToEdit
+                ? 'Salvando...'
+                : 'Adicionando...'
+              : taskToEdit
+              ? 'Salvar Alterações'
+              : 'Adicionar Tarefa'}
           </Button>
         </div>
       </form>

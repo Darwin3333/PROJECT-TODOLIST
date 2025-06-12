@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
-import Form from 'react-bootstrap/Form'; // Para o textarea e controlo de formulário
-import type { Task, CommentForDisplay, User } from '../types/interfaces'; // Certifique-se de que o caminho está correto
+import Form from 'react-bootstrap/Form';
+import type { Task, CommentForDisplay, User } from '../types/interfaces';
 
 interface TaskViewModalProps {
   show: boolean;
@@ -11,8 +11,8 @@ interface TaskViewModalProps {
   onHide: () => void;
   getUsernameById: (userId: string | undefined) => string;
   getStatusBadgeClass: (status: string) => string;
-  currentUser: User | null; // Recebe o utilizador autenticado
-  onPostNewComment: (taskId: string, commentText: string) => Promise<boolean>; // Função para postar o comentário
+  currentUser: User | null;
+  onPostNewComment: (taskId: string, commentText: string) => Promise<boolean>;
 }
 
 const TaskViewModal: React.FC<TaskViewModalProps> = ({
@@ -25,9 +25,9 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
   onPostNewComment,
 }) => {
   const [newCommentText, setNewCommentText] = useState<string>('');
-  const [isSubmittingComment, setIsSubmittingComment] = useState<boolean>(false);
+  const [isSubmittingComment, setIsSubmittingComment] =
+    useState<boolean>(false);
 
-  // Limpa o campo de texto do comentário quando o modal é aberto para uma nova tarefa
   useEffect(() => {
     if (show) {
       setNewCommentText('');
@@ -36,17 +36,17 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
   }, [show, task]);
 
   if (!task) {
-    return null; // Não renderiza nada se não houver tarefa para visualizar
+    return null;
   }
 
-  const getCommentAuthorName = (authorId: string | undefined) => getUsernameById(authorId);
+  const getCommentAuthorName = (authorId: string | undefined) =>
+    getUsernameById(authorId);
 
   const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCommentText.trim() || !task) return;
     if (!currentUser) {
-      // Esta verificação também existe no App.tsx, mas é bom ter aqui para UX
-      alert("Você precisa estar autenticado para comentar.");
+      alert('Você precisa estar autenticado para comentar.');
       return;
     }
 
@@ -55,15 +55,18 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
     setIsSubmittingComment(false);
 
     if (success) {
-      setNewCommentText(''); // Limpa o campo após o envio bem-sucedido
-      // A lista de tarefas é atualizada pelo App.tsx, que recarrega as tarefas.
-      // O modal permanece aberto para o utilizador ver o seu comentário adicionado.
+      setNewCommentText('');
     }
-    // Se não for sucesso, uma mensagem de erro já deve ter sido mostrada por onPostNewComment (App.tsx)
   };
 
   return (
-    <Modal show={show} onHide={onHide} size="lg" centered backdrop={isSubmittingComment ? "static" : true}>
+    <Modal
+      show={show}
+      onHide={onHide}
+      size="lg"
+      centered
+      backdrop={isSubmittingComment ? 'static' : true}
+    >
       <Modal.Header closeButton={!isSubmittingComment}>
         <Modal.Title>{task.titulo}</Modal.Title>
       </Modal.Header>
@@ -91,35 +94,49 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
             <p className="mb-1">
               <strong>Data de Criação:</strong>{' '}
               {new Date(task.data_criacao).toLocaleDateString('pt-BR')} às{' '}
-              {new Date(task.data_criacao).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              {new Date(task.data_criacao).toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </p>
             <p className="mb-0">
               <strong>Última Atualização:</strong>{' '}
               {new Date(task.data_atualizacao).toLocaleDateString('pt-BR')} às{' '}
-              {new Date(task.data_atualizacao).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              {new Date(task.data_atualizacao).toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </p>
           </div>
         </div>
 
         {task.tags && task.tags.length > 0 && (
           <div className="mb-3">
-            <h6><i className="bi bi-tags-fill me-1"></i>Tags:</h6>
+            <h6>
+              <i className="bi bi-tags-fill me-1"></i>Tags:
+            </h6>
             {task.tags.map((tag) => (
-              <span key={tag} className="badge bg-secondary me-1 mb-1 p-2"> {/* Estilo de tag consistente */}
+              <span key={tag} className="badge bg-secondary me-1 mb-1 p-2">
                 {tag}
               </span>
             ))}
           </div>
         )}
 
-        {/* Secção de Comentários Existentes */}
         <div className="mb-3">
           <h6>
             <i className="bi bi-chat-dots-fill me-1"></i>
             Comentários ({task.comentarios.length})
           </h6>
           {task.comentarios && task.comentarios.length > 0 ? (
-            <ul className="list-unstyled mt-2" style={{ maxHeight: '200px', overflowY: 'auto', paddingRight: '10px' }}>
+            <ul
+              className="list-unstyled mt-2"
+              style={{
+                maxHeight: '200px',
+                overflowY: 'auto',
+                paddingRight: '10px',
+              }}
+            >
               {task.comentarios.map((comment: CommentForDisplay) => (
                 <li
                   key={comment.id_comentario}
@@ -129,28 +146,41 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
                     <strong>{getCommentAuthorName(comment.id_autor)}</strong>{' '}
                     {comment.data ? (
                       <small className="text-muted">
-                        ({new Date(comment.data).toLocaleDateString('pt-BR')} às {new Date(comment.data).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}):
+                        ({new Date(comment.data).toLocaleDateString('pt-BR')} às{' '}
+                        {new Date(comment.data).toLocaleTimeString('pt-BR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        ):
                       </small>
                     ) : (
-                      <small className="text-muted"> (Data não disponível):</small>
+                      <small className="text-muted">
+                        {' '}
+                        (Data não disponível):
+                      </small>
                     )}
                   </p>
-                  <p className="mb-0" style={{ whiteSpace: 'pre-wrap' }}>{comment.comentario}</p>
+                  <p className="mb-0" style={{ whiteSpace: 'pre-wrap' }}>
+                    {comment.comentario}
+                  </p>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-muted small fst-italic">Nenhum comentário ainda.</p>
+            <p className="text-muted small fst-italic">
+              Nenhum comentário ainda.
+            </p>
           )}
         </div>
-        
 
         <hr />
 
-        {/* Formulário para Adicionar Novo Comentário */}
         {currentUser && (
           <div className="mt-3">
-            <h6><i className="bi bi-chat-plus-fill me-1"></i>Adicionar um comentário</h6>
+            <h6>
+              <i className="bi bi-chat-plus-fill me-1"></i>Adicionar um
+              comentário
+            </h6>
             <Form onSubmit={handleCommentSubmit}>
               <Form.Group className="mb-2">
                 <Form.Control
@@ -163,27 +193,44 @@ const TaskViewModal: React.FC<TaskViewModalProps> = ({
                   disabled={isSubmittingComment}
                 />
               </Form.Group>
-              <Button 
-                variant="primary" 
-                type="submit" 
+              <Button
+                variant="primary"
+                type="submit"
                 size="sm"
                 disabled={isSubmittingComment || !newCommentText.trim()}
               >
-                {isSubmittingComment ? 
-                  (<> <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Enviando... </>) : 
-                  (<> <i className="bi bi-send-fill me-1"></i> Enviar Comentário </>)
-                }
+                {isSubmittingComment ? (
+                  <>
+                    {' '}
+                    <span
+                      className="spinner-border spinner-border-sm"
+                      role="status"
+                      aria-hidden="true"
+                    ></span>{' '}
+                    Enviando...{' '}
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    <i className="bi bi-send-fill me-1"></i> Enviar Comentário{' '}
+                  </>
+                )}
               </Button>
             </Form>
           </div>
         )}
         {!currentUser && (
-            <p className="text-muted small mt-3 fst-italic">Você precisa estar autenticado para adicionar comentários.</p>
+          <p className="text-muted small mt-3 fst-italic">
+            Você precisa estar autenticado para adicionar comentários.
+          </p>
         )}
-
       </Modal.Body>
       <Modal.Footer>
-        <Button variant="outline-secondary" onClick={onHide} disabled={isSubmittingComment}> {/* outline-secondary para um visual mais leve */}
+        <Button
+          variant="outline-secondary"
+          onClick={onHide}
+          disabled={isSubmittingComment}
+        >
           Fechar
         </Button>
       </Modal.Footer>
