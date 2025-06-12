@@ -128,7 +128,7 @@ def atualizar_tarefa(task_uuid_param: str, dados_atualizacao: dict, solicitante_
     now_utc = datetime.now(timezone.utc) # Esta já é offset-aware (UTC)
     payload_set["data_atualizacao"] = now_utc
 
-    # ... (lógica de processamento de comentários como antes) ...
+
     if "comentarios" in payload_set and isinstance(payload_set["comentarios"], list):
         comentarios_processados_update = []
         ids_comentarios_existentes_na_tarefa_db = {c.get("id_comentario") for c in tarefa_antiga.get("comentarios", []) if c.get("id_comentario")}
@@ -177,23 +177,23 @@ def atualizar_tarefa(task_uuid_param: str, dados_atualizacao: dict, solicitante_
 
                 data_criacao_tarefa_db = tarefa_antiga.get("data_criacao")
                 
-                # --- 👇 CORREÇÃO APLICADA AQUI 👇 ---
+               
                 if isinstance(data_criacao_tarefa_db, datetime):
                     # Garante que a data de criação vinda do DB seja offset-aware (UTC)
                     data_criacao_tarefa_aware = data_criacao_tarefa_db.replace(tzinfo=timezone.utc)
                     
                     # now_utc já é offset-aware
-                    duracao = now_utc - data_criacao_tarefa_aware # Agora ambas são offset-aware
+                    duracao = now_utc - data_criacao_tarefa_aware 
                     duracao_em_segundos = duracao.total_seconds()
                     
                     if duracao_em_segundos >= 0: 
                         redis_client.incrbyfloat(f"user:{redis_user_segment}:stats:total_completion_time_seconds", duracao_em_segundos)
                         redis_client.incr(f"user:{redis_user_segment}:stats:total_completed_tasks_count")
-                # --- 👆 FIM DA CORREÇÃO 👆 ---
             
-        # ... (lógica de atualização de tags como antes) ...
+            
+       
         old_tags = set(tarefa_antiga.get("tags", []))
-        new_tags = set(payload_set.get("tags", old_tags if "tags" in payload_set else [])) # Correção aqui também
+        new_tags = set(payload_set.get("tags", old_tags if "tags" in payload_set else [])) 
         tags_removed = old_tags - new_tags
         tags_added = new_tags - old_tags
         for tag in tags_removed: redis_client.zincrby(f"user:{redis_user_segment}:tags:top", -1, tag)
